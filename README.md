@@ -14,6 +14,8 @@ FarGift是一个基于Farcaster生态的礼物平台智能合约系统。该系�
 ## 项目结构
 
 - `src/Present.sol` - 核心礼物合约，负责资产托管与生命周期管理
+- `src/nft/WrappedPresentNFT.sol` - 包装态礼物 NFT（`tokenId = uint256(presentId)`，从 `Present.getPresent` 读取元信息，on-chain SVG/JSON）
+- `src/nft/UnwrappedPresentNFT.sol` - 拆包态礼物 NFT（同上）
 - `test/` - `Present` 合约的单元测试与模拟合约
 - `script/` - 部署与交互脚本（含仿真脚本）
 - `deploy_when_funded.sh` - 余额监控自动部署脚本
@@ -32,13 +34,20 @@ FarGift/
 ├── .gitmodules               # 子模块（OpenZeppelin、forge-std）
 ├── README.md                 # 项目说明（部署、测试、目录与说明）
 ├── contract.md               # 需求与接口草案（事件、方法说明）
+├── contract-new.md           # 新版需求（含 title/desc、建议聚合到 struct）
 ├── env.example               # .env 模板（不含敏感信息）
 ├── HANDOVER_contract-binj.md # 交接文档（ERC721 Wrapped/Unwrapped 对接与实现指南）
 ├── HANDOVER_miniapp.md       # 交接文档（MiniAPP 日志索引、WebSocket订阅、只读查询）
 ├── src/
-│   └── Present.sol           # 核心合约（礼物生命周期、权限、暂停、黑名单、紧急提取等）
+│   ├── Present.sol           # 核心合约（礼物生命周期、权限、暂停、黑名单、紧急提取等）
+│   └── nft/
+│       ├── WrappedPresentNFT.sol   # 包装态礼物NFT
+│       └── UnwrappedPresentNFT.sol # 拆包态礼物NFT
 ├── script/
-│   ├── DeployPresent.s.sol   # 部署与交互脚本（DeployPresent、TestPresentCalls 等）
+│   ├── DeployPresent.s.sol   # 部署 Present
+│   ├── DeployNFTs.s.sol      # 部署并对接两个 NFT 到 Present
+│   ├── WrapOnceTest.s.sol    # 调用 wrapPresentTest 产生日志与 Wrapped NFT
+│   ├── WrapPublicOnce.s.sol  # 公开领取示例的 wrapPresentTest 调用
 │   └── SimulatePresent.s.sol # 一次性在仿真环境中完成部署+wrapPresent（fork或本地）
 ├── test/
 │   ├── Present.t.sol         # Present 合约单测（37项）
@@ -147,48 +156,122 @@ forge script script/DeployPresent.s.sol:TestPresentCalls --rpc-url $ARBITRUM_SEP
 
 ## 合约功能
 
-### 1. `wrapPresent`
+### 1. `wrapPresent` / `wrapPresentTest`
 
-打包礼物，支持ETH和ERC20代币（未来将支持ERC721）。
+打包礼物，支持ETH和ERC20代币（未来将支持ERC721）。测试阶段建议使用带后缀的 `wrapPresentTest(recipients, title, desc, content)`，避免暴露正式 selector。
 
 ```solidity
 function wrapPresent(address[] calldata recipients, Asset[] calldata content) external payable
+function wrapPresentTest(address[] calldata recipients, string calldata title, string calldata desc, Asset[] calldata content) external payable
 ```
 
-### 2. `unwrapPresent`
+### 2. `unwrapPresent` / `unwrapPresentTest`
 
-拆开礼物，仅允许指定接收者或在公开模式下任何人操作。
+拆开礼物，仅允许指定接收者或在公开模式下任何人操作（空数组表示公开）。
 
 ```solidity
 function unwrapPresent(bytes32 presentId) external
+function unwrapPresentTest(bytes32 presentId) external
 ```
 
-### 3. `takeBack`
+### 3. `takeBack` / `takeBackTest`
 
 允许发送者收回未被拆开的礼物或已过期礼物。
 
 ```solidity
 function takeBack(bytes32 presentId) external
+function takeBackTest(bytes32 presentId) external
+```
+
+### 4. 只读聚合 `getPresent`
+
+返回 sender、recipients、content、title、description、status、expiryAt，供 NFT/前端读取元信息。
+
+```solidity
+function getPresent(bytes32 presentId) external view returns (
+  address sender,
+  address[] memory recipients,
+  Asset[] memory content,
+  string memory title,
+  string memory description,
+  uint8 status,
+  uint256 expiryAt
+)
 ```
 
 ## 与前端集成
 
 前端可以通过以下方式与合约交互:
 
-1. 监听事件获取礼物ID:
+1. 监听事件获取礼物ID（测试环境下推荐监听 `WrapPresentTest`）：
 ```javascript
-const filter = presentContract.filters.WrapPresent();
+const filter = presentContract.filters.WrapPresentTest();
 const events = await presentContract.queryFilter(filter);
 ```
 
-2. 查询礼物内容:
+2. 查询礼物内容/元数据：
 ```javascript
-const content = await presentContract.getPresentContent(presentId);
+const [sender, recipients, content, title, desc, status, expiryAt] = await presentContract.getPresent(presentId);
 ```
 
-3. 查询礼物状态:
+3. 若需要仅内容/状态：
 ```javascript
+const content = await presentContract.getPresentContent(presentId);
 const status = await presentContract.getPresentStatus(presentId);
+```
+
+## NFT 集成与一体化验证（本地 fork）
+
+以下步骤在本地 anvil fork 上完成，不消耗真实 ETH：
+
+1) 启动本地 fork 并注资部署地址：
+```bash
+anvil --fork-url https://arb-sepolia.g.alchemy.com/v2/<YOUR_KEY> --chain-id 421614 --port 8547
+source .env
+ADDR=$(cast wallet address --private-key "$PRIVATE_KEY")
+cast rpc anvil_setBalance $ADDR 0xDE0B6B3A7640000 --rpc-url http://127.0.0.1:8547
+```
+
+2) 部署 Present：
+```bash
+forge script script/DeployPresent.s.sol:DeployPresent \
+  --rpc-url http://127.0.0.1:8547 \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast -vvv
+export PRESENT_ADDRESS=<上一步输出的合约地址>
+```
+
+3) 部署并对接两个 NFT：
+```bash
+forge script script/DeployNFTs.s.sol:DeployNFTs \
+  --rpc-url http://127.0.0.1:8547 \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast -vvv
+# 日志将打印 Wrapped 与 Unwrapped NFT 地址，已自动 set 到 Present
+```
+
+4) 执行一次 wrap（测试版接口）：
+```bash
+forge script script/WrapOnceTest.s.sol:WrapOnceTest \
+  --rpc-url http://127.0.0.1:8547 \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast -vvv
+```
+
+5) 从交易回执读取 presentId 与 tokenId（Wrapped 的 Transfer.topic[3]）：
+```bash
+TX=<上一步输出的交易哈希>
+cast receipt $TX --rpc-url http://127.0.0.1:8547
+# 日志中：
+#  - Wrapped NFT 的 Transfer topics[3] = tokenId = presentId（同值）
+#  - Present 的 WrapPresentTest topics[1] = presentId
+```
+
+6) 读取 Wrapped NFT 的 tokenURI（应返回 data:application/json;base64,...）：
+```bash
+WRAPPED=<Wrapped NFT 地址>
+TOKENID=<上一步解析的 tokenId>
+cast call --rpc-url http://127.0.0.1:8547 $WRAPPED "tokenURI(uint256)" $TOKENID
 ```
 
 ## 开发团队
@@ -206,40 +289,25 @@ MIT
 
 - `src/Present.sol`
   - 核心合约，负责礼物的打包、拆包、收回、过期等全生命周期管理。
-  - 关键事件：`WrapPresent`、`UnwrapPresent`、`TakeBack`（与最初接口保持一致）。
-  - 关键结构：`Asset { address tokens; uint256 amounts; }`，同时内部扩展了 `ExtendedAsset` 以便将来兼容 NFT。
-  - 关键状态：`mapping(bytes32 => Asset[]) contentOf` 保留了原接口；并扩展存储发送者、接收者、状态、过期时间、黑名单等。
-  - 构造函数：`constructor(address initialOwner)`，部署脚本传入部署者地址为 owner。
+  - 关键事件：`WrapPresent/UnwrapPresent/TakeBack` 与测试期事件 `WrapPresentTest/UnwrapPresentTest/TakeBackTest`。
+  - 关键结构：`struct PresentInfo { sender, recipients, content, title, description, status, createdAt, expiryAt }`；集中存储于 `mapping(bytes32 => PresentInfo) presents`。
+  - 兼容性：为兼容旧测试与脚本，仍保留若干旧映射（如 `contentOf` 等）；推荐在正式版移除，仅保留 `presents`。
+  - 只读：新增聚合只读 `getPresent(bytes32)` 便于前端/NFT 读取完整元信息。
 
 - `script/DeployPresent.s.sol`
-  - `DeployPresent`：读取环境变量 `PRIVATE_KEY`（以 `vm.envUint` 形式，要求16进制且带 `0x` 前缀），`vm.startBroadcast` 后部署 `Present`，输出合约地址。
-  - `DeployPresentWithNFTs`：预留部署并设置 NFT 合约的流程（当前未启用）。
-  - `TestPresentCalls`：示例交互脚本，读取 `PRIVATE_KEY` 和 `PRESENT_ADDRESS`，向 `wrapPresent` 发送 0.01 ETH 创建礼物（用于链上交互验证）。
+  - `DeployPresent`：读取 `PRIVATE_KEY`，部署 `Present`，输出合约地址。
+
+- `script/DeployNFTs.s.sol`
+  - 部署 `WrappedPresentNFT/UnwrappedPresentNFT`，调用 `setPresentContract`，并回填到 `Present.setNFTContracts`。
+
+- `script/WrapOnceTest.s.sol`
+  - 调用 `wrapPresentTest(recipients, title, desc, content)`，产生日志并铸造 Wrapped NFT。
 
 - `test/Present.t.sol` 及相关 mocks
   - 覆盖礼物生命周期的核心路径（打包、拆包、收回、过期、黑名单、暂停等）。
   - 当前结果：全部通过（见上文“测试与验证记录”）。
 
-- `deploy_when_funded.sh`
-  - 新增的自动化部署脚本：轮询部署地址余额，超过阈值（默认 0.002 ETH）后自动执行部署并尝试验证。
-  - 依赖 `.env` 中的变量：`ARBITRUM_SEPOLIA_RPC_URL`、`PRIVATE_KEY`（需 0x 前缀）、`ARBISCAN_API_KEY`。
-
-- `foundry.toml`
-  - `remappings` 指向 OpenZeppelin 合约库。
-  - `[rpc_endpoints]` 配置了 `arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC_URL}"`，便于命令引用。
-  - `[etherscan]` 配置了 `arbitrum_sepolia` 的 API Key 占位（也可通过命令行 `--etherscan-api-key` 传入）。
-
-- `.env`（被 `.gitignore` 忽略）
-  - 示例字段：
-    - `ARBITRUM_SEPOLIA_RPC_URL="https://sepolia-rollup.arbitrum.io/rpc"`
-    - `PRIVATE_KEY="0x<64位十六进制>"`（重要：脚本用 `vm.envUint` 读取，必须带 `0x` 前缀）
-    - `ARBISCAN_API_KEY="<你的Arbiscan API Key>"`
-
-- `HANDOVER_contract-binj.md`
-  - ERC721 Wrapped/Unwrapped 实现与对接 Present 的交接文档：接口、onlyPresent 权限、tokenURI 元数据方案、测试与联调流程。
-
-- `HANDOVER_miniapp.md`
-  - MiniAPP 端日志索引、getLogs 分段回放、WebSocket 实时订阅、只读查询 getPresentContent 的集成指南。
+- 其余文件说明保持不变。
 
 ## 运行脚本与常见输出/错误说明
 
@@ -258,17 +326,17 @@ MIT
 
 ### 如何配置更稳的RPC
 - `.env` 中可配置：
-  ```
-  # 单个主RPC（仍保留）
-  ARBITRUM_SEPOLIA_RPC_URL="https://sepolia-rollup.arbitrum.io/rpc"
+```
+# 单个主RPC（仍保留）
+ARBITRUM_SEPOLIA_RPC_URL="https://sepolia-rollup.arbitrum.io/rpc"
 
-  # 多RPC回退（新增，可选；空格或逗号分隔）
-  ARBITRUM_SEPOLIA_RPC_URLS="https://arb-sepolia.g.alchemy.com/v2/<KEY> https://sepolia-rollup.arbitrum.io/rpc,https://arbitrum-sepolia.infura.io/v3/<KEY>"
+# 多RPC回退（新增，可选；空格或逗号分隔）
+ARBITRUM_SEPOLIA_RPC_URLS="https://arb-sepolia.g.alchemy.com/v2/<KEY> https://sepolia-rollup.arbitrum.io/rpc,https://arbitrum-sepolia.infura.io/v3/<KEY>"
 
-  # 可选：轮询间隔与阈值
-  POLL_INTERVAL=20
-  THRESH_WEI=2000000000000000
-  ```
+# 可选：轮询间隔与阈值
+POLL_INTERVAL=20
+THRESH_WEI=2000000000000000
+```
 - 建议：使用 Alchemy/Infura 的专属 RPC（更稳定），并放在 `ARBITRUM_SEPOLIA_RPC_URLS` 的最前面。
 
 ### FAQ：常见坑与原因
@@ -282,32 +350,23 @@ MIT
   - 原因：余额不足、RPC限流或 `ARBISCAN_API_KEY` 未配置。
   - 解决：确保余额≥阈值、换更稳RPC、配置API Key或先去掉 `--verify`。
 
-## 安全性分析（仅分析，未改动）
+## 安全性分析（更新）
 
-- 重入/双花相关：
-  - 外部转账点位：
-    - `wrapPresent` 末尾对多余 ETH 的退款（`call`），`wrapPresent` 本身不更新跨交易可争抢的余额计账，且后续无状态依赖；
-    - `_transferAssets` 在 `unwrapPresent` 与 `takeBack` 中调用，均采用 Checks-Effects-Interactions：先更新 `presentStatus` 与统计，再转账（ETH使用 `call`，ERC20 使用 `safeTransfer`）。
-  - 防护：合约继承 `ReentrancyGuard` 且对外部可转账路径均有 `nonReentrant` 修饰（`wrapPresent`/`unwrapPresent`/`takeBack`），重入窗口受限；状态先行更新，避免二次领取。
-  - 结论：针对典型可重入-双花场景具备鲁棒性；仍需留意第三方代币的非标准行为（已用 `SafeERC20` 缓解）。
-
-- Gas 消耗：
-  - 可变长数组操作（资产/接收者）受上限约束：`maxAssetCount`、`maxRecipientCount`，避免极端大数组导致的 gas 爆炸与 DoS；
-  - `wrapPresent` 的 `content` 写入 `storage`，和 `unwrap/takeBack` 的线性转账成本与资产数量线性相关，符合预期；
-  - 内部循环仅对长度受限数组进行，当前实现对 gas 攻击具有一定鲁棒性。
-
-- Return bomb（返回数据炸弹）：
-  - 外部调用点为 `IERC20.safeTransfer` 与 `IERC20.safeTransferFrom`（通过 OpenZeppelin `SafeERC20` 封装）；该封装对无返回值、false返回、revert的情况均兼容处理，降低 ERC20 非标准返回数据导致的漏洞。
-  - 读取函数 `getPresentContent` 返回内存数组（来自 `storage` 拷贝），可能在极端大礼物时 gas 偏高，但受 `maxAssetCount` 限制，不构成炸弹风险。
-
-- 其他注意：
-  - `generatePresentId` 使用 `msg.sender`、`recipients`、`content`、`timestamp`、`prevrandao`、`address(this)` 生成 ID，避免跨链/跨实例重放与碰撞；
-  - `onlyRecipient` 对“任意人可领”通过空数组表示，逻辑清晰；
-  - `emergencyWithdraw` 仅 owner 可用，并检查余额/使用 `SafeERC20`。
-
-整体结论：当前代码在常见漏洞面具有较好防护；进一步增强可以考虑：
-- 对 ERC20 实现 `safeIncreaseAllowance`/`safeDecreaseAllowance` 等路径的测试补充（非必须）；
-- 对事件中补充更多上下文（非安全必需）。
+- 访问控制与外部调用
+  - `wrap/unwrap/takeBack` 全部 `nonReentrant`；`onlyRecipient` 对空接收者数组解释为公开；`onlySender` 用于收回；
+  - NFT 铸造仅允许 `onlyPresent` 调用，`tokenId = uint256(presentId)` 防重复。
+- 资金安全
+  - ERC20 使用 `SafeERC20`；ETH 使用 `call` 并检查返回值；紧急提取 `onlyOwner`；黑名单可阻断已知问题代币；
+  - Checks-Effects-Interactions 顺序：先更新状态与计数，再转资产。
+- 过期与回收
+  - `expiryAt` 控制过期；`canUnwrap` 先检查过期并 `PresentExpired`，再校验可拆包状态；回收仅在未拆包或过期时允许。
+- 事件与索引
+  - 生产与测试事件并存，测试部署建议使用 `*Test` 版本，防止过早暴露正式 selector；`presentId` 为 indexed 便于索引。
+- 攻击面与缓解
+  - 重入：`nonReentrant` + 状态先行；
+  - Return bomb：`SafeERC20` 适配非标准 ERC20；
+  - Gas DoS：`maxAssetCount/maxRecipientCount` 限制；
+  - 重放与碰撞：`generatePresentId` 引入 `msg.sender/recipients/content/timestamp/prevrandao/address(this)`。
 
 ## 附录：公共测试网充值（可选，可能受限流/门槛）
 
@@ -330,9 +389,9 @@ MIT
 
 ### 如何确认到账
 - 脚本日志会显示当前余额；或使用：
-  ```bash
-  cast balance --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL" 0x<你的地址>
-  ```
+```bash
+cast balance --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL" 0x<你的地址>
+```
 
 ## API Key 与测试钱包
 
@@ -362,8 +421,18 @@ MIT
   ```bash
   forge coverage --report lcov
   ```
-- 摘要（测试输出节选）：
-  - 37/37 测试通过；覆盖率详见 `lcov.info`（可用 VSCode 插件或 CI 展示）
+- 摘要（本地最新一次覆盖率执行节选）：
+  ```text
+  Ran 37 tests for test/Present.t.sol:PresentTest → 37/37 通过
+  
+  File                            | %Lines  | %Stmts | %Branches | %Funcs
+  ------------------------------------------------------------------------
+  src/Present.sol                 | 75.33%  | 75.00% | 66.67%    | 78.12%
+  src/nft/WrappedPresentNFT.sol   | 0.00%   | 0.00%  | 0.00%     | 0.00%
+  src/nft/UnwrappedPresentNFT.sol | 0.00%   | 0.00%  | 0.00%     | 0.00%
+  Total                           | 44.31%  | 39.72% | 36.84%    | 51.90%
+  ```
+  - 说明：当前单测覆盖的是 `Present` 合约的核心业务路径；NFT 为显示层，未纳入单测覆盖统计（在本地 fork 端到端中验证）。如需提高总体覆盖率，可新增针对两个 NFT 的 `tokenURI`/`mint` 单测。
 
 ## env.example（模板）
 
@@ -384,87 +453,82 @@ cp env.example .env
 
 ### 环境
 - 本地节点：
-  ```bash
-  anvil --fork-url https://arb-sepolia.g.alchemy.com/v2/<YOUR_KEY> \
-        --chain-id 421614 \
-        --port 8547
-  ```
+```bash
+anvil --fork-url https://arb-sepolia.g.alchemy.com/v2/<YOUR_KEY> \
+      --chain-id 421614 \
+      --port 8547
+```
 - 部署地址：从 `.env` 的 `PRIVATE_KEY` 推导（示例）
-  ```bash
-  source .env
-  cast wallet address --private-key "$PRIVATE_KEY"
-  # => 0x1840fCD5a8cC90F18d320477c691A038aa800B6B
-  ```
+```bash
+source .env
+cast wallet address --private-key "$PRIVATE_KEY"
+# => 0x1840fCD5a8cC90F18d320477c691A038aa800B6B
+```
 - 本地注资（无需水龙头）：
-  ```bash
-  cast rpc anvil_setBalance 0x1840fCD5a8cC90F18d320477c691A038aa800B6B 0xDE0B6B3A7640000 \
-    --rpc-url http://127.0.0.1:8547
-  cast balance --rpc-url http://127.0.0.1:8547 0x1840fCD5a8cC90F18d320477c691A038aa800B6B
-  # => 1000000000000000000 (1 ETH)
-  ```
+```bash
+cast rpc anvil_setBalance 0x1840fCD5a8cC90F18d320477c691A038aa800B6B 0xDE0B6B3A7640000 \
+  --rpc-url http://127.0.0.1:8547
+cast balance --rpc-url http://127.0.0.1:8547 0x1840fCD5a8cC90F18d320477c691A038aa800B6B
+# => 1000000000000000000 (1 ETH)
+```
 
 ### 部署与调用
 - 部署 Present：
-  ```bash
-  forge script script/DeployPresent.s.sol:DeployPresent \
-    --rpc-url http://127.0.0.1:8547 \
-    --private-key "$PRIVATE_KEY" \
-    --broadcast -vvv
-  # 输出（节选）：
-  # Present contract deployed at: 0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db
-  # Hash: 0x345083170b9f55f61e8b1970d7d2fdf7aff8f981dbf930db99fbfe738ad4b35c
-  ```
-- 调用 wrapPresent：
-  ```bash
-  export PRESENT_ADDRESS=0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db
-  forge script script/DeployPresent.s.sol:TestPresentCalls \
-    --rpc-url http://127.0.0.1:8547 \
-    --private-key "$PRIVATE_KEY" \
-    --broadcast -vvv
-  # 输出（节选）：
-  # Gift created successfully
-  # Hash: 0x053fb082366464a1f56388f1f643bbcc41a86bd4cd71e25eafff88b4c28ed32a
-  ```
+```bash
+forge script script/DeployPresent.s.sol:DeployPresent \
+  --rpc-url http://127.0.0.1:8547 \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast -vvv
+# 输出（示例）：
+# Present contract deployed at: 0x...
+```
+- 调用 wrapPresent（或使用 `WrapOnceTest.s.sol`）：
+```bash
+export PRESENT_ADDRESS=0x<DeployPresent输出地址>
+forge script script/WrapOnceTest.s.sol:WrapOnceTest \
+  --rpc-url http://127.0.0.1:8547 \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast -vvv
+# 输出（示例）：wrapPresentTest executed
+```
 
 ### 提取 presentId（从交易日志）
 - 方式一：交易回执解析（推荐）
-  ```bash
-  TX=0x053fb082366464a1f56388f1f643bbcc41a86bd4cd71e25eafff88b4c28ed32a
-  cast receipt $TX --rpc-url http://127.0.0.1:8547 | jq -r \
-    '.logs[] | select(.topics[0]=="0xf57d75a06786ec46ba529c7c6a4a8c5f0c1eae07a3a01fa6c75da0320a9f7588") | .topics[1]'
-  # 输出即为 presentId（bytes32）
-  ```
+```bash
+TX=0x<WrapOnceTest交易哈希>
+cast receipt $TX --rpc-url http://127.0.0.1:8547
+# 日志中：
+#  - Wrapped NFT 的 Transfer topics[3] = tokenId = presentId
+#  - Present 的 WrapPresentTest topics[1] = presentId
+```
 - 方式二：按区块范围检索合约 Logs
-  ```bash
-  # 根据需要替换区块范围
-  cast logs --from-block <BLOCK> --to-block <BLOCK> \
-    --address $PRESENT_ADDRESS \
-    --rpc-url http://127.0.0.1:8547 | grep -A2 WrapPresent
-  ```
+```bash
+cast logs --from-block <BLOCK> --to-block <BLOCK> \
+  --address $PRESENT_ADDRESS \
+  --rpc-url http://127.0.0.1:8547 | grep -A2 WrapPresentTest
+```
 
 ### 校验礼物内容（供前端/miniapp联调）
 ```bash
 cast call $PRESENT_ADDRESS \
-  "getPresentContent(bytes32)((address,uint256)[])" \
+  "getPresent(bytes32)((address,address[],(address,uint256)[],string,string,uint8,uint256))" \
   0x<PRESENT_ID> \
   --rpc-url http://127.0.0.1:8547
 ```
 
 ### 常见坑（本地 fork 场景）
 - 端口占用（os error 48）：已有进程占用 8545，改用 `--port 8547` 或杀掉占用进程：
-  ```bash
-  lsof -nP -iTCP:8545 -sTCP:LISTEN
-  kill -9 <PID>
-  ```
+```bash
+lsof -nP -iTCP:8545 -sTCP:LISTEN
+kill -9 <PID>
+```
 - `--fork-url` 变量未展开：不要把 `export` 和 `anvil` 写在同一行，更不要加管道；建议直接把 URL 写死在命令里。
 - `lack of funds ... for max fee`：仅仿真时会预估费用校验；在本地 fork 场景下使用 `anvil_setBalance` 注资后再广播即可。
 - `PRESENT_ADDRESS` 解析失败：确保为真实 0x 地址，不要使用占位符。
 
 ### 安全查看 .env（不泄露私钥）
 ```bash
-# 查看关键信息但不显示私钥
 awk -F= '/^ARBITRUM_SEPOLIA_RPC_URLS=|^ARBITRUM_SEPOLIA_RPC_URL=|^ARBISCAN_API_KEY=/{print} /^PRIVATE_KEY=/{print "PRIVATE_KEY=***redacted***"}' .env
-# 或仅验证地址推导是否正确
 source .env && cast wallet address --private-key "$PRIVATE_KEY"
 ```
 
@@ -473,10 +537,26 @@ source .env && cast wallet address --private-key "$PRIVATE_KEY"
 - 单元测试：Present 37/37 通过，覆盖核心业务路径（打包/拆包/收回/过期/暂停/黑名单/紧急提取/配置/边界等）。
 - 覆盖率：已生成 `lcov.info`，可在本地或CI中展示，辅助评估改动对覆盖的影响。
 - 零成本本地 fork（基于 Arbitrum Sepolia）实测：
-  - 本地启动 anvil fork + 本地 `anvil_setBalance` 注资 + 本地真实广播（仅在本地），成功完成部署与一次 `wrapPresent` 调用；
-  - 通过 `cast receipt` 从交易日志中解析 `WrapPresent` 的 indexed `presentId`，并用 `getPresentContent` 校验礼物内容；
+  - 本地启动 anvil fork + 本地 `anvil_setBalance` 注资 + 本地真实广播（仅在本地），成功完成部署与一次 `wrapPresentTest` 调用；
+  - 通过 `cast receipt` 从交易日志中解析 indexed `presentId`，并用 `getPresent`/`getPresentContent` 校验礼物元信息与内容；
   - 该路径不依赖任何水龙头或真实ETH，适合前端/miniapp联调与团队内部验收。
 - 公共测试网（可选）：
-  - 受限于部分水龙头的反女巫门槛（如“需要主网0.001ETH”），以及公共RPC的限流/不稳定，短期内不作为主流程；
+  - 受限于部分水龙头的反女巫门槛及公共RPC限流/不稳定，短期内不作为主流程；
   - 推荐在具备稳定 RPC（Alchemy/Infura）与可用水龙头时再行尝试，或由同组同学转少量测试ETH；
   - 文档将此作为附录保留，供后续需要时参考。
+
+### 本次一体化（含 NFT）本地 fork 演示记录
+
+- 环境：anvil 本地 fork（Arbitrum Sepolia），本地注资 1 ETH
+- 合约地址（本地 fork 实例）：
+  - Present: `0x22F2800aeE94c9e57D76981bC13e7a3760D396D9`
+  - WrappedPresentNFT: `0xFf1e6Ed2d485A5E10BB1bD28191a3Fba68CB9d72`
+  - UnwrappedPresentNFT: `0x3F4FbC0E1296FA2742AD1319D66Ca91c8377a11A`
+- wrap（指定接收者示例）：
+  - 脚本：`script/WrapOnceTest.s.sol`
+  - 交易哈希：`0xa58b2e0bea8abf9c3fb6826103d641a100adaea7adc6e549e0005f1ba856f5d9`
+  - 日志要点：
+    - Wrapped ERC721 Transfer 的 `topics[3]`（即 `tokenId`）= `0x70a18f80dd4ae3fb45451b72c56f4ca90773fe79ff8edcf9aff774c1ec5b6403`
+    - Present 的 `WrapPresentTest` 的 `topics[1]`（`presentId`）与上面 `tokenId` 一致
+  - tokenURI 调用（截断显示）：
+    - `cast call <WrappedNFT> "tokenURI(uint256)" <tokenId>` 返回 `
