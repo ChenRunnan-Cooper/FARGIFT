@@ -178,3 +178,59 @@ cast call 0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db \
 - ERC20 样例（自动部署 MockERC20 → mint → approve → wrapPresentTest）：`script/WrapWithERC20.s.sol`
 
 运行方式详见 README“在测试网上批量生成样例数据”。 
+
+---
+
+## 十一、批量生成多组样例（命令合集，拿来即用）
+
+1) 基础环境变量
+```bash
+export ARBITRUM_SEPOLIA_RPC_URL="https://<你的RPC>"
+export PRIVATE_KEY="0x<你的测试网私钥>"
+export PRESENT_ADDRESS="0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db"
+```
+
+2) 一次性产出 4 组“完整流程”样例（wrap→unwrap / wrap→takeBack / 公开→unwrap / 仅wrap）
+```bash
+forge script script/GenerateSamplesOnExisting.s.sol:GenerateSamplesOnExisting \
+  --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast --skip-simulation
+# 需要更多样例：重复跑这一条即可（都追加到同一合约地址上）
+```
+
+3) 批量追加“ETH 只 wrap”的样例（多几条 WrapPresent 日志）
+- 单次：
+```bash
+forge script script/WrapOnly.s.sol:WrapOnly \
+  --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast --skip-simulation
+```
+- 批量（示例：5 次，金额逐步增加，公开与否交替）：
+```bash
+for i in 1 2 3 4 5; do
+  export WRAP_ETH_AMOUNT_WEI=$((200000000000000 + i*10000000000000))  # 0.0002 ETH 起，每次+0.00001
+  export WRAP_PUBLIC=$((i%2))                                         # 交替公开/定向
+  forge script script/WrapOnly.s.sol:WrapOnly \
+    --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast --skip-simulation
+done
+```
+
+4) 批量追加“ERC20 的 wrap”（会先 approve，再 wrapPresentTest，带 title/desc）
+- 使用现成测试 ERC20（推荐）：
+```bash
+export TOKEN_ADDRESS=0x<你的测试ERC20合约地址>
+forge script script/WrapWithERC20.s.sol:WrapWithERC20 \
+  --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast --skip-simulation
+```
+- 批量（示例：3 次）：
+```bash
+for i in 1 2 3; do
+  forge script script/WrapWithERC20.s.sol:WrapWithERC20 \
+    --rpc-url $ARBITRUM_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast --skip-simulation
+done
+```
+- 没有测试 ERC20 也行：不设置 TOKEN_ADDRESS，脚本会自动部署一个 MockERC20、mint 给你，再 approve+wrap。
+
+5) 哪里查看 presentId / 日志
+- 本地快照（便于对照）：`broadcast/**/421614/run-latest.json`
+- 链上权威数据：用区块浏览器或 RPC 订阅 `PRESENT_ADDRESS` 的事件
+  - ETH：WrapPresent / UnwrapPresent / TakeBack
+  - ERC20（test入口）：WrapPresentTest（带 title/desc） 
