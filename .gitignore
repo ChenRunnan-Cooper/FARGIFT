@@ -12,3 +12,9 @@ docs/
 
 # Dotenv file
 .env
+
+out/
+cache/
+.DS_Store
+lcov.info
+SAMPLES.md
