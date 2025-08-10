@@ -24,6 +24,7 @@ FarGift是一个基于Farcaster生态的礼物平台智能合约系统。该系�
 - `env.example` - 环境变量模板（不含敏感信息）
 - `HANDOVER_contract-binj.md` - 交接文档（NFT合约对接说明，供 @contract-binj 使用）
 - `HANDOVER_miniapp.md` - 交接文档（日志索引与只读查询集成，供 MiniAPP 组使用）
+- `abi/` - 已导出 ABI（Present/Wrapped/Unwrapped）
 
 ### 项目目录树与文件用途
 
@@ -38,6 +39,7 @@ FarGift/
 ├── env.example               # .env 模板（不含敏感信息）
 ├── HANDOVER_contract-binj.md # 交接文档（ERC721 Wrapped/Unwrapped 对接与实现指南）
 ├── HANDOVER_miniapp.md       # 交接文档（MiniAPP 日志索引、WebSocket订阅、只读查询）
+├── abi/                      # 已导出 ABI（Present/Wrapped/Unwrapped）
 ├── src/
 │   ├── Present.sol           # 核心合约（礼物生命周期、权限、暂停、黑名单、紧急提取等）
 │   └── nft/
