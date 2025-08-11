@@ -7,144 +7,233 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 
-//这个合约有被黑客攻击的风险，但现在我没时间弄安全或者加密措施
 contract UnwrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
     using Strings for uint256;
-    
+
     address public presentContract;
+    address public deployer;
     
-    // NFT 元数据结构
-    struct UnwrappedMetadata {
+    // 存储每个拆包NFT的礼物信息
+    struct UnwrappedGiftInfo {
         string title;
-        string description;
-        string imageType;  // "gift", "surprise", "business" 等
-        uint256 value;     // 礼物价值（已拆开，显示原始价值）
-        address sender;    // 原发送者
-        address opener;    // 拆包者
-        uint256 unwrappedAt; // 拆包时间
+        string message;
+        uint256 ethValue;
+        address creator;
+        address recipient;
+        uint256 unwrappedAt;
+        bool hasTokenRewards;
+        uint256 tokenAmount;
     }
     
-    // 存储每个 NFT 的元数据
-    mapping(uint256 => UnwrappedMetadata) public unwrappedMetadata;
+    mapping(uint256 => UnwrappedGiftInfo) public unwrappedGiftInfos;
     
-    constructor() ERC721("UnwrappedPresent", "UP") {
-        presentContract = msg.sender;
+    constructor(address _presentContract) ERC721("UnwrappedPresent", "UP") {
+        presentContract = _presentContract;
+        deployer = msg.sender;
     }
-    
+
+    // 添加设置函数，只有部署者能调用
+    function setPresentContract(address _presentContract) external {
+        require(msg.sender == deployer, "Only deployer can set");
+        require(_presentContract != address(0), "Invalid address");
+        presentContract = _presentContract;
+    }
+
+    // 修改mint函数，接收完整的拆包礼物信息
     function mint(
         address to, 
-        uint256 tokenId,
-        string memory title,
-        string memory description,
-        string memory imageType,
-        uint256 value,
-        address sender
-    ) external {
+        bytes32 presentId,
+        string memory giftTitle,
+        string memory giftMessage,
+        uint256 ethValue,
+        address creator,
+        uint256 tokenAmount
+    ) external returns (uint256) {
         require(msg.sender == presentContract, "Only present contract can mint");
         
-        // 存储元数据
-        unwrappedMetadata[tokenId] = UnwrappedMetadata({
-            title: string(abi.encodePacked("Opened: ", title)),  // 添加 "Opened:" 前缀
-            description: string(abi.encodePacked("Unwrapped gift: ", description)),
-            imageType: "unwrapped",  // 统一设为已拆开类型
-            value: value,
-            sender: sender,    // 原发送者
-            opener: to,        // 拆包者
-            unwrappedAt: block.timestamp
+        uint256 tokenId = uint256(presentId);
+        _mint(to, tokenId);
+        
+        // 存储拆包礼物信息
+        unwrappedGiftInfos[tokenId] = UnwrappedGiftInfo({
+            title: giftTitle,
+            message: giftMessage,
+            ethValue: ethValue,
+            creator: creator,
+            recipient: to,
+            unwrappedAt: block.timestamp,
+            hasTokenRewards: tokenAmount > 0,
+            tokenAmount: tokenAmount
         });
         
-        _mint(to, tokenId);
-        _setTokenURI(tokenId, generateTokenURI(tokenId));
+        string memory uri = generateTokenURI(tokenId, presentId);
+        _setTokenURI(tokenId, uri);
+        
+        return tokenId;
     }
-    
-    // 生成动态 token URI
-    function generateTokenURI(uint256 tokenId) internal view returns (string memory) {
-        UnwrappedMetadata memory metadata = unwrappedMetadata[tokenId];
+
+    // 获取拆包礼物信息的公开函数
+    function getUnwrappedGiftInfo(uint256 tokenId) external view returns (
+        string memory title,
+        string memory message,
+        uint256 ethValue,
+        address creator,
+        address recipient,
+        uint256 unwrappedAt,
+        bool hasTokenRewards,
+        uint256 tokenAmount
+    ) {
+        require(_ownerOf(tokenId) != address(0), "Token does not exist");
+        UnwrappedGiftInfo memory info = unwrappedGiftInfos[tokenId];
+        return (
+            info.title, 
+            info.message, 
+            info.ethValue, 
+            info.creator, 
+            info.recipient, 
+            info.unwrappedAt,
+            info.hasTokenRewards,
+            info.tokenAmount
+        );
+    }
+
+    function generateTokenURI(
+        uint256 tokenId,
+        bytes32 presentId
+    ) internal view returns (string memory) {
+        UnwrappedGiftInfo memory giftInfo = unwrappedGiftInfos[tokenId];
+        string memory svg = generateUnwrappedSVG(tokenId, presentId, giftInfo);
         
-        // 生成 SVG 图片
-        string memory svg = generateSVG(metadata);
-        
-        // 创建 JSON metadata
-        string memory json = Base64.encode(
+        // 生成属性数组
+        string memory attributes = string(
             abi.encodePacked(
-                '{"name": "', metadata.title, '",',
-                '"description": "', metadata.description, '",',
-                '"image": "data:image/svg+xml;base64,', Base64.encode(bytes(svg)), '",',
-                '"attributes": [',
-                    '{"trait_type": "Status", "value": "Unwrapped"},',
-                    '{"trait_type": "Original Value", "value": ', metadata.value.toString(), '},',
-                    '{"trait_type": "Original Sender", "value": "', Strings.toHexString(uint160(metadata.sender)), '"},',
-                    '{"trait_type": "Opened By", "value": "', Strings.toHexString(uint160(metadata.opener)), '"},',
-                    '{"trait_type": "Unwrapped At", "value": ', metadata.unwrappedAt.toString(), '}',
-                ']}'
+                '[',
+                    '{"trait_type": "Present ID", "value": "', uint256(presentId).toString(), '"},',
+                    '{"trait_type": "Type", "value": "Unwrapped"},',
+                    '{"trait_type": "ETH Value", "value": "', (giftInfo.ethValue / 1e15).toString(), '"},',
+                    '{"trait_type": "Creator", "value": "', Strings.toHexString(uint160(giftInfo.creator), 20), '"},',
+                    '{"trait_type": "Recipient", "value": "', Strings.toHexString(uint160(giftInfo.recipient), 20), '"},',
+                    '{"trait_type": "Unwrapped Date", "value": "', giftInfo.unwrappedAt.toString(), '"},',
+                    '{"trait_type": "Has Token Rewards", "value": "', giftInfo.hasTokenRewards ? "Yes" : "No", '"}'
+            )
+        );
+        
+        if (giftInfo.hasTokenRewards) {
+            attributes = string(
+                abi.encodePacked(
+                    attributes,
+                    ',{"trait_type": "Token Amount", "value": "', giftInfo.tokenAmount.toString(), '"}'
+                )
+            );
+        }
+        
+        attributes = string(abi.encodePacked(attributes, ']'));
+        
+        string memory json = Base64.encode(
+            bytes(
+                string(
+                    abi.encodePacked(
+                        '{"name": "', giftInfo.title, ' (Unwrapped)",',
+                        '"description": "', giftInfo.message, ' This gift has been unwrapped and the contents have been claimed!",',
+                        '"image": "data:image/svg+xml;base64,', Base64.encode(bytes(svg)), '",',
+                        '"attributes": ', attributes,
+                        '}'
+                    )
+                )
             )
         );
         
         return string(abi.encodePacked("data:application/json;base64,", json));
     }
-    
-    // 生成 SVG 图片（已拆开的礼物样式）
-    function generateSVG(UnwrappedMetadata memory metadata) internal pure returns (string memory) {
-        // 已拆开礼物使用特殊的颜色方案
-        string memory primaryColor = "#8E8E8E";    // 灰色调表示已拆开
-        string memory secondaryColor = "#B8B8B8";  // 浅灰色
-        string memory accentColor = "#FFD700";     // 金色作为强调色
+
+    function generateUnwrappedSVG(
+        uint256 tokenId,
+        bytes32 presentId,
+        UnwrappedGiftInfo memory giftInfo
+    ) internal pure returns (string memory) {
+        // 根据ETH价值调整背景颜色和星星数量
+        string memory bgColor = giftInfo.ethValue >= 1e18 ? "#ff6b6b" : giftInfo.ethValue >= 1e16 ? "#ffa500" : "#ff69b4";
+        string memory glowColor = giftInfo.ethValue >= 1e18 ? "#ffcccc" : "#ffe0b3";
+        
+        // 截断长标题用于显示
+        string memory displayTitle = bytes(giftInfo.title).length > 18 ? 
+            string(abi.encodePacked(substring(giftInfo.title, 0, 15), "...")) : 
+            giftInfo.title;
+            
+        // 生成星星装饰
+        string memory stars = generateStars(giftInfo.ethValue);
         
         return string(
             abi.encodePacked(
-                '<svg width="350" height="350" xmlns="http://www.w3.org/2000/svg">',
+                '<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">',
                 '<defs>',
-                    '<linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">',
-                        '<stop offset="0%" stop-color="', primaryColor, '"/>',
-                        '<stop offset="100%" stop-color="', secondaryColor, '"/>',
-                    '</linearGradient>',
-                    '<pattern id="openPattern" patternUnits="userSpaceOnUse" width="20" height="20">',
-                        '<rect width="20" height="20" fill="none" stroke="', accentColor, '" stroke-width="1" opacity="0.3"/>',
-                    '</pattern>',
+                    '<radialGradient id="bg" cx="50%" cy="50%" r="50%">',
+                        '<stop offset="0%" style="stop-color:', glowColor, ';stop-opacity:0.8"/>',
+                        '<stop offset="100%" style="stop-color:#f0f8ff;stop-opacity:1"/>',
+                    '</radialGradient>',
+                    '<filter id="glow">',
+                        '<feGaussianBlur stdDeviation="3" result="coloredBlur"/>',
+                        '<feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>',
+                    '</filter>',
                 '</defs>',
-                
-                // 背景
-                '<rect width="350" height="350" fill="url(#grad)" rx="20"/>',
-                '<rect width="350" height="350" fill="url(#openPattern)" rx="20"/>',
-                
-                // 打开的礼物盒（散乱的样子）
-                '<rect x="65" y="160" width="220" height="140" fill="white" stroke="', primaryColor, '" stroke-width="3" rx="10" transform="rotate(2 175 230)"/>',
-                
-                // 掀开的盖子
-                '<rect x="60" y="120" width="230" height="30" fill="', primaryColor, '" rx="8" transform="rotate(-15 175 135)"/>',
-                
-                // 散落的蝴蝶结
-                '<polygon points="140,100 125,85 140,70 155,85" fill="', accentColor, '" transform="rotate(-30 140 85)"/>',
-                '<polygon points="210,110 195,95 210,80 225,95" fill="', accentColor, '" transform="rotate(45 210 95)"/>',
-                '<circle cx="140" cy="85" r="6" fill="white"/>',
-                '<circle cx="210" cy="95" r="6" fill="white"/>',
-                
-                // 装饰线条（表示打开状态）
-                '<line x1="175" y1="160" x2="175" y2="300" stroke="', primaryColor, '" stroke-width="2" stroke-dasharray="5,5"/>',
-                '<line x1="65" y1="230" x2="285" y2="230" stroke="', primaryColor, '" stroke-width="2" stroke-dasharray="5,5"/>',
-                
-                // 文字
-                '<text x="175" y="35" text-anchor="middle" font-family="Arial" font-size="18" font-weight="bold" fill="white">',
-                 unicode'✓ OPENED</text>',
-                 
-                '<text x="175" y="60" text-anchor="middle" font-family="Arial" font-size="14" fill="white">',
-                    'Original Value: $', metadata.value.toString(),
+                '<rect width="400" height="400" fill="url(#bg)"/>',
+                stars,
+                '<circle cx="200" cy="200" r="120" fill="', bgColor, '" opacity="0.9" filter="url(#glow)"/>',
+                '<circle cx="200" cy="200" r="100" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.7"/>',
+                '<text x="200" y="180" text-anchor="middle" font-family="Arial" font-size="20" fill="white" font-weight="bold">',
+                displayTitle,
                 '</text>',
-                
-                '<text x="175" y="320" text-anchor="middle" font-family="Arial" font-size="10" fill="white">',
-                    'Unwrapped by: ', Strings.toHexString(uint160(metadata.opener)),
+                '<text x="200" y="205" text-anchor="middle" font-family="Arial" font-size="14" fill="white">',
+                'Unwrapped!',
                 '</text>',
-                
-                '<text x="175" y="335" text-anchor="middle" font-family="Arial" font-size="10" fill="white">',
-                    'Unwrapped Present #', uint256(uint160(metadata.sender)).toString(),
+                '<text x="200" y="225" text-anchor="middle" font-family="Arial" font-size="12" fill="white">',
+                'Value: ', (giftInfo.ethValue / 1e15).toString(), ' mETH',
                 '</text>',
-                
+                giftInfo.hasTokenRewards ? 
+                    '<text x="200" y="245" text-anchor="middle" font-family="Arial" font-size="10" fill="white">+ Token Rewards</text>' : 
+                    '',
+                '<text x="200" y="270" text-anchor="middle" font-family="Arial" font-size="10" fill="white" opacity="0.8">',
+                'Token #', tokenId.toString(),
+                '</text>',
                 '</svg>'
             )
         );
     }
     
-    // 字符串截取工具函数
+    // 生成星星装饰（根据价值决定数量）
+    function generateStars(uint256 ethValue) internal pure returns (string memory) {
+        uint256 starCount = ethValue >= 1e18 ? 8 : ethValue >= 1e16 ? 5 : 3;
+        string memory stars = "";
+        
+        // 简化的星星位置（预定义）
+        if (starCount >= 3) {
+            stars = string(abi.encodePacked(
+                stars,
+                '<circle cx="100" cy="100" r="2" fill="#ffff00" opacity="0.8"/>',
+                '<circle cx="300" cy="120" r="2" fill="#ffff00" opacity="0.8"/>',
+                '<circle cx="80" cy="300" r="2" fill="#ffff00" opacity="0.8"/>'
+            ));
+        }
+        if (starCount >= 5) {
+            stars = string(abi.encodePacked(
+                stars,
+                '<circle cx="320" cy="280" r="2" fill="#ffff00" opacity="0.8"/>',
+                '<circle cx="150" cy="80" r="2" fill="#ffff00" opacity="0.8"/>'
+            ));
+        }
+        if (starCount >= 8) {
+            stars = string(abi.encodePacked(
+                stars,
+                '<circle cx="60" cy="150" r="2" fill="#ffff00" opacity="0.8"/>',
+                '<circle cx="340" cy="200" r="2" fill="#ffff00" opacity="0.8"/>',
+                '<circle cx="200" cy="60" r="2" fill="#ffff00" opacity="0.8"/>'
+            ));
+        }
+        
+        return stars;
+    }
+    
+    // 辅助函数：字符串截取
     function substring(string memory str, uint startIndex, uint endIndex) internal pure returns (string memory) {
         bytes memory strBytes = bytes(str);
         bytes memory result = new bytes(endIndex - startIndex);
@@ -153,40 +242,46 @@ contract UnwrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
         }
         return string(result);
     }
-    
-    // 新版本 OpenZeppelin 需要重写的函数
-    function _update(address to, uint256 tokenId, address auth) internal override(ERC721, ERC721Enumerable) returns (address) {
+
+    // 重写tokenURI函数以支持动态元数据
+    function tokenURI(uint256 tokenId)
+        public
+        view
+        override(ERC721, ERC721URIStorage)
+        returns (string memory)
+    {
+        require(_ownerOf(tokenId) != address(0), "Token does not exist");
+        
+        // 如果没有设置URI，则生成动态URI
+        string memory _tokenURI = super.tokenURI(tokenId);
+        if (bytes(_tokenURI).length == 0) {
+            return generateTokenURI(tokenId, bytes32(tokenId));
+        }
+        return _tokenURI;
+    }
+
+    // Override functions
+    function _update(address to, uint256 tokenId, address auth)
+        internal
+        override(ERC721, ERC721Enumerable)
+        returns (address)
+    {
         return super._update(to, tokenId, auth);
     }
-    
-    function _increaseBalance(address account, uint128 value) internal override(ERC721, ERC721Enumerable) {
+
+    function _increaseBalance(address account, uint128 value)
+        internal
+        override(ERC721, ERC721Enumerable)
+    {
         super._increaseBalance(account, value);
     }
-    
-    // 重写必要的函数
-    function tokenURI(uint256 tokenId) public view override(ERC721, ERC721URIStorage) returns (string memory) {
-        return super.tokenURI(tokenId);
-    }
-    
-    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721URIStorage, ERC721Enumerable) returns (bool) {
+
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(ERC721, ERC721Enumerable, ERC721URIStorage)
+        returns (bool)
+    {
         return super.supportsInterface(interfaceId);
-    }
-    
-    // 获取 NFT 详细信息（用于前端显示）
-    function getUnwrappedInfo(uint256 tokenId) external view returns (UnwrappedMetadata memory) {
-        require(_ownerOf(tokenId) != address(0), "NFT does not exist");
-        return unwrappedMetadata[tokenId];
-    }
-    
-    // 批量获取用户的 NFT - 使用 ERC721Enumerable 的功能优化性能
-    function getUserNFTs(address user) external view returns (uint256[] memory) {
-        uint256 balance = balanceOf(user);
-        uint256[] memory tokenIds = new uint256[](balance);
-        
-        for (uint256 i = 0; i < balance; i++) {
-            tokenIds[i] = tokenOfOwnerByIndex(user, i);
-        }
-        
-        return tokenIds;
     }
 }
