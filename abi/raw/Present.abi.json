@@ -48,19 +48,6 @@
   },
   {
     "type": "function",
-    "name": "claimPresentTest",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "claims",
     "inputs": [
       {
@@ -195,7 +182,7 @@
       {
         "name": "",
         "type": "tuple[]",
-        "internalType": "struct Present.Asset[]",
+        "internalType": "struct Asset[]",
         "components": [
           {
             "name": "tokens",
@@ -204,42 +191,6 @@
           },
           {
             "name": "amounts",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPresentPrizeTiers",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct PrizeTier[]",
-        "components": [
-          {
-            "name": "valuePercent",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "count",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "claimedCount",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -533,19 +484,6 @@
   },
   {
     "type": "function",
-    "name": "takeBackTest",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "totalPresentsExpired",
     "inputs": [],
     "outputs": [
@@ -695,131 +633,24 @@
     "name": "wrapPresent",
     "inputs": [
       {
-        "name": "recipients",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "content",
-        "type": "tuple[]",
-        "internalType": "struct Present.Asset[]",
-        "components": [
-          {
-            "name": "tokens",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amounts",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "wrapPresentRandom",
-    "inputs": [
-      {
-        "name": "_content",
-        "type": "tuple[]",
-        "internalType": "struct Present.Asset[]",
-        "components": [
-          {
-            "name": "tokens",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amounts",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "_prizeTiers",
-        "type": "tuple[]",
-        "internalType": "struct PrizeTier[]",
-        "components": [
-          {
-            "name": "valuePercent",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "count",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "claimedCount",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "wrapPresentTest",
-    "inputs": [
-      {
-        "name": "recipients",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "title",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "description",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "content",
-        "type": "tuple[]",
-        "internalType": "struct Present.Asset[]",
-        "components": [
-          {
-            "name": "tokens",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amounts",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "wrapPresentWithOptions",
-    "inputs": [
-      {
         "name": "_recipients",
         "type": "address[]",
         "internalType": "address[]"
       },
       {
+        "name": "_title",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "_description",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
         "name": "_content",
         "type": "tuple[]",
-        "internalType": "struct Present.Asset[]",
+        "internalType": "struct Asset[]",
         "components": [
           {
             "name": "tokens",
@@ -982,25 +813,6 @@
   },
   {
     "type": "event",
-    "name": "TakeBackTest",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "sender",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TokenBlacklisted",
     "inputs": [
       {
@@ -1052,45 +864,7 @@
   },
   {
     "type": "event",
-    "name": "UnwrapPresentTest",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "taker",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "WrapPresent",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "sender",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WrapPresentTest",
     "inputs": [
       {
         "name": "presentId",
