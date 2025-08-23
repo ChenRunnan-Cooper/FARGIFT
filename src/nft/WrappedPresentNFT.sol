@@ -4,10 +4,11 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 
-// --- 新增：Present 合约的只读接口 ---
+// Present 合约的只读接口，完全匹配主合约
 interface IPresentView {
     struct Asset {
         address tokens;
@@ -34,47 +35,50 @@ interface IPresentView {
     function getPresentContent(bytes32 presentId) external view returns (Asset[] memory);
 }
 
-
-contract WrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
+contract WrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable, Ownable {
     using Strings for uint256;
 
     address public presentContract;
-    address public deployer;
     
-    // --- 移除 GiftInfo 结构体和 mapping ---
+    // 新增事件
+    event PresentNFTMinted(address indexed to, bytes32 indexed presentId, uint256 indexed tokenId);
+    event PresentContractUpdated(address indexed oldContract, address indexed newContract);
+    event TokenURIRequested(uint256 indexed tokenId);
     
-    constructor(address _presentContract) ERC721("WrappedPresent", "WP") {
+    constructor(address _presentContract) ERC721("WrappedPresent", "WP") Ownable(msg.sender) {
+        require(_presentContract != address(0), "Invalid present contract address");
         presentContract = _presentContract;
-        deployer = msg.sender;
+        emit PresentContractUpdated(address(0), _presentContract);
     }
 
-    // 添加设置函数，只有部署者能调用
-    function setPresentContract(address _presentContract) external {
-        require(msg.sender == deployer, "Only deployer can set");
+    // 设置Present合约地址，只有所有者能调用
+    function setPresentContract(address _presentContract) external onlyOwner {
         require(_presentContract != address(0), "Invalid address");
+        address oldContract = presentContract;
         presentContract = _presentContract;
+        emit PresentContractUpdated(oldContract, _presentContract);
     }
 
-    // --- 简化 mint 函数，以匹配 Present.sol 的调用 ---
-    function mint(
-        address to, 
-        bytes32 presentId
-    ) external returns (uint256) {
+    // 实现主合约需要的IPresentNFT接口：mint函数
+    // 完全匹配主合约调用：IPresentNFT(wrappedNFT).mint(msg.sender, presentId);
+    function mint(address to, bytes32 presentId) external returns (uint256) {
         require(msg.sender == presentContract, "Only present contract can mint");
+        require(to != address(0), "Cannot mint to zero address");
         
         uint256 tokenId = uint256(presentId);
+        
+        // 检查tokenId是否已存在
+        require(_ownerOf(tokenId) == address(0), "Token already exists");
+        
         _mint(to, tokenId);
         
-        // 不再存储礼物信息或设置 tokenURI
+        emit PresentNFTMinted(to, presentId, tokenId);
+        
         return tokenId;
     }
 
-    // --- 移除 getGiftInfo 函数 ---
-
-    // --- 修改 generateTokenURI 以实时获取数据 ---
-    function generateTokenURI(
-        uint256 tokenId
-    ) internal view returns (string memory) {
+    // 动态生成tokenURI，实时从Present合约获取数据
+    function generateTokenURI(uint256 tokenId) internal view returns (string memory) {
         IPresentView present = IPresentView(presentContract);
         bytes32 presentId = bytes32(tokenId);
 
@@ -90,14 +94,12 @@ contract WrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
             }
         }
         
-        string memory svg = generateWrappedSVG(tokenId, title, ethValue);
-        
         string memory attributes = string(
             abi.encodePacked(
                 '[',
                     '{"trait_type": "Present ID", "value": "', tokenId.toString(), '"},',
                     '{"trait_type": "Type", "value": "Wrapped"},',
-                    '{"trait_type": "ETH Value", "value": "', (ethValue / 1e15).toString(), ' mETH"},', // 修改单位
+                    '{"trait_type": "ETH Value", "value": "', (ethValue / 1e15).toString(), ' mETH"},',
                     '{"trait_type": "Creator", "value": "', Strings.toHexString(uint160(creator), 20), '"}',
                 ']'
             )
@@ -109,7 +111,7 @@ contract WrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
                     abi.encodePacked(
                         '{"name": "', title, '",',
                         '"description": "', description, '",',
-                        '"image": "data:image/svg+xml;base64,', Base64.encode(bytes(svg)), '",',
+                        '"image": "https://ipfs.io/ipfs/QmZcGoCRZBzbdM6WMudgXqmtzQycNpBJjTegafrvVEPRLL",',
                         '"attributes": ', attributes,
                         '}'
                     )
@@ -120,44 +122,6 @@ contract WrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
         return string(abi.encodePacked("data:application/json;base64,", json));
     }
 
-    // --- 修改 generateWrappedSVG 的参数 ---
-    function generateWrappedSVG(
-        uint256 tokenId, 
-        string memory giftTitle,
-        uint256 ethValue
-    ) internal pure returns (string memory) {
-        string memory boxColor = ethValue >= 1e18 ? "#ff6b6b" : ethValue >= 1e16 ? "#ffa500" : "#ff69b4";
-        string memory ribbonColor = "#ffd93d";
-        
-        string memory displayTitle = bytes(giftTitle).length > 20 ? 
-            string(abi.encodePacked(substring(giftTitle, 0, 17), "...")) : 
-            giftTitle;
-            
-        return string(
-            abi.encodePacked(
-                '<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">',
-                '<rect width="400" height="400" fill="#f8f9fa"/>',
-                '<rect x="50" y="80" width="300" height="240" fill="', boxColor, '" rx="10"/>',
-                '<rect x="40" y="70" width="320" height="20" fill="', ribbonColor, '"/>',
-                '<rect x="190" y="60" width="20" height="280" fill="', ribbonColor, '"/>',
-                '<circle cx="200" cy="80" r="25" fill="', ribbonColor, '"/>',
-                '<text x="200" y="190" text-anchor="middle" font-family="Arial" font-size="18" fill="white" font-weight="bold">',
-                displayTitle,
-                '</text>',
-                '<text x="200" y="220" text-anchor="middle" font-family="Arial" font-size="14" fill="white">',
-                'Value: ', (ethValue / 1e15).toString(), ' mETH',
-                '</text>',
-                '<text x="200" y="240" text-anchor="middle" font-family="Arial" font-size="14" fill="white">',
-                'Token #', tokenId.toString(),
-                '</text>',
-                '<text x="200" y="260" text-anchor="middle" font-family="Arial" font-size="12" fill="white">',
-                'Click to unwrap!',
-                '</text>',
-                '</svg>'
-            )
-        );
-    }
-    
     function substring(string memory str, uint startIndex, uint endIndex) internal pure returns (string memory) {
         bytes memory strBytes = bytes(str);
         bytes memory result = new bytes(endIndex - startIndex);
@@ -178,7 +142,7 @@ contract WrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
         return generateTokenURI(tokenId);
     }
 
-    // --- 修复 OpenZeppelin v5.0 的 override 要求 ---
+    // 修复 OpenZeppelin v5.0 的 override 要求
     function _update(address to, uint256 tokenId, address auth)
         internal
         override(ERC721, ERC721Enumerable)

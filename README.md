@@ -9,16 +9,16 @@
 - **核心合约 `Present.sol`**：
   - `0x8cED4381845b1fB450C8D2279ed4c888A38fC08d`
 - **凭证合约 `WrappedPresentNFT.sol`** (已打包):
-  - `0xf4Ae53514d2C2706312C2Bb9800514eD5e1513F3`
+  - `0x6dfe0d2EE843758F8fAC6FA498167C63c08279Fd`
 - **凭证合约 `UnwrappedPresentNFT.sol`** (已拆包):
-  - `0xCCDe61b2bda2fF192475dd8315e50Ed1E3365347`
+  - `0xc247946F5d08AEa9D98368A71f835818bF499eC0`
 - 一键导出到环境变量（可直接粘贴到终端）：
   ```bash
   export ARBITRUM_SEPOLIA_RPC_URL="https://<你的RPC>"
   export PRIVATE_KEY="0x<你的测试网私钥>"
   export PRESENT_ADDRESS="0x8cED4381845b1fB450C8D2279ed4c888A38fC08d"
-  export WRAPPED_NFT_ADDRESS="0xf4Ae53514d2C2706312C2Bb9800514eD5e1513F3"
-  export UNWRAPPED_NFT_ADDRESS="0xCCDe61b2bda2fF192475dd8315e50Ed1E3365347"
+  export WRAPPED_NFT_ADDRESS="0x6dfe0d2EE843758F8fAC6FA498167C63c08279Fd"
+  export UNWRAPPED_NFT_ADDRESS="0xc247946F5d08AEa9D98368A71f835818bF499eC0"
   ```
 
 ---
@@ -161,8 +161,8 @@ forge script script/GenerateSamples.s.sol:GenerateSamples \
 - 链：Arbitrum Sepolia（chainId 421614）
 - 合约地址:
   - **Present**: `0x8cED4381845b1fB450C8D2279ed4c888A38fC08d`
-  - **WrappedNFT**: `0xf4Ae53514d2C2706312C2Bb9800514eD5e1513F3`
-  - **UnwrappedNFT**: `0xCCDe61b2bda2fF192475dd8315e50Ed1E3365347`
+  - **WrappedNFT**: `0x6dfe0d2EE843758F8fAC6FA498167C63c08279Fd`
+  - **UnwrappedNFT**: `0xc247946F5d08AEa9D98368A71f835818bF499eC0`
 - ABI：`abi/raw/Present.abi.json`
 
 **监听事件**（以 viem 为例）

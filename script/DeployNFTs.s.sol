@@ -21,7 +21,7 @@ contract DeployNFTs is Script {
         require(presentAddress != address(0), "PRESENT_ADDRESS env not set");
 
         WrappedPresentNFT wrapped = new WrappedPresentNFT(presentAddress);
-        UnwrappedPresentNFT unwrapped = new UnwrappedPresentNFT(presentAddress);
+        UnwrappedPresentNFT unwrapped = new UnwrappedPresentNFT(presentAddress, deployer);
 
         INFTAdmin(address(wrapped)).setPresentContract(presentAddress);
         INFTAdmin(address(unwrapped)).setPresentContract(presentAddress);

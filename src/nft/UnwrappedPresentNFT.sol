@@ -2,12 +2,13 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-// --- 新增：Present 合约的只读接口 ---
+// Present 合约的只读接口，完全匹配主合约
 interface IPresentViewU {
     struct Asset {
         address tokens;
@@ -34,187 +35,158 @@ interface IPresentViewU {
     function getPresentContent(bytes32 presentId) external view returns (Asset[] memory);
 }
 
-contract UnwrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
+// 【绝对正确的继承顺序】：ERC721 → ERC721Enumerable → ERC721URIStorage → Ownable
+contract UnwrappedPresentNFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable {
     using Strings for uint256;
 
-    address public presentContract;
+    address payable public presentContract;
     address public deployer;
+
+    struct UnwrappedGiftInfo {
+        string title;
+        string message;
+        uint256 ethValue;
+        address creator;
+        address recipient;
+        uint256 unwrappedAt;
+        bool hasTokenRewards;
+        uint256 tokenAmount;
+    }
+
+    mapping(uint256 => UnwrappedGiftInfo) public unwrappedGiftInfos;
     
-    // --- 移除 UnwrappedGiftInfo 结构体和 mapping ---
+    // 新增事件
+    event PresentNFTMinted(address indexed to, bytes32 indexed presentId, uint256 indexed tokenId);
+    event PresentContractUpdated(address indexed oldContract, address indexed newContract);
+    event TokenURIRequested(uint256 indexed tokenId);
+    event UnwrappedGiftInfoStored(uint256 indexed tokenId, string title, uint256 ethValue);
     
-    constructor(address _presentContract) ERC721("UnwrappedPresent", "UP") {
-        presentContract = _presentContract;
+    constructor(address _presentContract, address initialOwner) 
+        ERC721("UnwrappedPresent", "UP") 
+        Ownable(initialOwner) 
+    {
+        require(_presentContract != address(0), "Invalid present contract");
+        presentContract = payable(_presentContract);
         deployer = msg.sender;
+        emit PresentContractUpdated(address(0), _presentContract);
     }
 
-    function setPresentContract(address _presentContract) external {
-        require(msg.sender == deployer, "Only deployer can set");
+    function setPresentContract(address _presentContract) external onlyOwner {
         require(_presentContract != address(0), "Invalid address");
-        presentContract = _presentContract;
+        address oldContract = presentContract;
+        presentContract = payable(_presentContract);
+        emit PresentContractUpdated(oldContract, _presentContract);
     }
 
-    // --- 简化 mint 函数 ---
-    function mint(
-        address to, 
-        bytes32 presentId
-    ) external returns (uint256) {
+    function mint(address to, bytes32 presentId) external returns (uint256) {
         require(msg.sender == presentContract, "Only present contract can mint");
+        require(to != address(0), "Invalid recipient");
+        
+        IPresentViewU present = IPresentViewU(presentContract);
+        (address sender, string memory title, string memory description,,,,,) = present.getPresent(presentId);
+        IPresentViewU.Asset[] memory content = present.getPresentContent(presentId);
+        
+        uint256 ethValue = 0;
+        bool hasTokenRewards = false;
+        uint256 tokenAmount = 0;
+        
+        for (uint i = 0; i < content.length; i++) {
+            if (content[i].tokens == address(0)) {
+                ethValue += content[i].amounts;
+            } else {
+                hasTokenRewards = true;
+                if (tokenAmount == 0) {
+                    tokenAmount = content[i].amounts;
+                }
+            }
+        }
         
         uint256 tokenId = uint256(presentId);
         _mint(to, tokenId);
         
+        unwrappedGiftInfos[tokenId] = UnwrappedGiftInfo({
+            title: title,
+            message: description,
+            ethValue: ethValue,
+            creator: sender,
+            recipient: to,
+            unwrappedAt: block.timestamp,
+            hasTokenRewards: hasTokenRewards,
+            tokenAmount: tokenAmount
+        });
+        
+        string memory uri = generateTokenURI(tokenId, presentId);
+        _setTokenURI(tokenId, uri);
+        
+        emit PresentNFTMinted(to, presentId, tokenId);
+        emit UnwrappedGiftInfoStored(tokenId, title, ethValue);
+        
         return tokenId;
     }
 
-    // --- 移除 getUnwrappedGiftInfo 函数 ---
+    function getUnwrappedGiftInfo(uint256 tokenId) external view returns (
+        string memory title, string memory message, uint256 ethValue,
+        address creator, address recipient, uint256 unwrappedAt,
+        bool hasTokenRewards, uint256 tokenAmount
+    ) {
+        require(_ownerOf(tokenId) != address(0), "Token does not exist");
+        UnwrappedGiftInfo memory info = unwrappedGiftInfos[tokenId];
+        return (
+            info.title, info.message, info.ethValue, 
+            info.creator, info.recipient, info.unwrappedAt,
+            info.hasTokenRewards, info.tokenAmount
+        );
+    }
 
-    // --- 修改 generateTokenURI 以实时获取数据 ---
-    function generateTokenURI(
-        uint256 tokenId
-    ) internal view returns (string memory) {
-        IPresentViewU present = IPresentViewU(presentContract);
-        bytes32 presentId = bytes32(tokenId);
-
-        // 从 Present.sol 实时获取数据
-        (address creator, string memory title, string memory description,,,,,) = present.getPresent(presentId);
-        IPresentViewU.Asset[] memory assets = present.getPresentContent(presentId);
-        address recipient = ownerOf(tokenId); // 接收者即为当前 NFT 的所有者
+    function generateTokenURI(uint256 tokenId, bytes32 presentId) internal view returns (string memory) {
+        UnwrappedGiftInfo memory giftInfo = unwrappedGiftInfos[tokenId];
+        string memory ipfsImageUrl = "https://ipfs.io/ipfs/QmZzNo1otv1fAjURQqGiBjDCZ6AwN91wVzZmonKsP48TPh";
         
-        uint256 ethValue = 0;
-        bool hasTokenRewards = false;
-        for (uint i = 0; i < assets.length; i++) {
-            if (assets[i].tokens == address(0)) {
-                ethValue += assets[i].amounts;
-            } else {
-                hasTokenRewards = true;
-            }
+        string memory attributes = string(abi.encodePacked(
+            '[',
+                '{"trait_type": "Present ID", "value": "', uint256(presentId).toString(), '"},',
+                '{"trait_type": "Type", "value": "Unwrapped"},',
+                '{"trait_type": "ETH Value", "value": "', (giftInfo.ethValue / 1e15).toString(), ' mETH"},',
+                '{"trait_type": "Creator", "value": "', Strings.toHexString(uint160(giftInfo.creator), 20), '"},',
+                '{"trait_type": "Recipient", "value": "', Strings.toHexString(uint160(giftInfo.recipient), 20), '"},',
+                '{"trait_type": "Unwrapped Date", "value": "', giftInfo.unwrappedAt.toString(), '"},',
+                '{"trait_type": "Has Token Rewards", "value": "', giftInfo.hasTokenRewards ? "Yes" : "No", '"}'
+            ']'
+        ));
+        
+        if (giftInfo.hasTokenRewards) {
+            attributes = string(abi.encodePacked(
+                attributes,
+                ',{"trait_type": "Token Amount", "value": "', giftInfo.tokenAmount.toString(), '"}'
+            ));
         }
         
-        string memory svg = generateUnwrappedSVG(tokenId, title, ethValue, hasTokenRewards);
-        
-        string memory attributes = string(
-            abi.encodePacked(
-                '[',
-                    '{"trait_type": "Present ID", "value": "', tokenId.toString(), '"},',
-                    '{"trait_type": "Type", "value": "Unwrapped"},',
-                    '{"trait_type": "Original ETH Value", "value": "', (ethValue / 1e15).toString(), ' mETH"},', // 明确为原始总价值
-                    '{"trait_type": "Creator", "value": "', Strings.toHexString(uint160(creator), 20), '"},',
-                    '{"trait_type": "Recipient", "value": "', Strings.toHexString(uint160(recipient), 20), '"},',
-                    '{"trait_type": "Has Token Rewards", "value": "', hasTokenRewards ? "Yes" : "No", '"}'
-                ,']'
-            )
-        );
-        
-        string memory json = Base64.encode(
-            bytes(
-                string(
-                    abi.encodePacked(
-                        '{"name": "', title, ' (Unwrapped)",',
-                        '"description": "', description, ' This gift has been unwrapped and the contents have been claimed!",',
-                        '"image": "data:image/svg+xml;base64,', Base64.encode(bytes(svg)), '",',
-                        '"attributes": ', attributes,
-                        '}'
-                    )
-                )
-            )
-        );
+        string memory json = Base64.encode(bytes(string(abi.encodePacked(
+            '{"name": "', giftInfo.title, ' (Unwrapped)",',
+            '"description": "', giftInfo.message, ' This gift has been unwrapped and the contents have been claimed!",',
+            '"image": "', ipfsImageUrl, '",',
+            '"attributes": ', attributes,
+            '}'
+        ))));
         
         return string(abi.encodePacked("data:application/json;base64,", json));
     }
 
-    // --- 修改 generateUnwrappedSVG 的参数 ---
-    function generateUnwrappedSVG(
-        uint256 tokenId,
-        string memory giftTitle,
-        uint256 ethValue,
-        bool hasTokenRewards
-    ) internal pure returns (string memory) {
-        string memory bgColor = ethValue >= 1e18 ? "#ff6b6b" : ethValue >= 1e16 ? "#ffa500" : "#ff69b4";
-        string memory glowColor = ethValue >= 1e18 ? "#ffcccc" : "#ffe0b3";
-        
-        string memory displayTitle = bytes(giftTitle).length > 18 ? 
-            string(abi.encodePacked(substring(giftTitle, 0, 15), "...")) : 
-            giftTitle;
-            
-        string memory stars = generateStars(ethValue);
-        
-        return string(
-            abi.encodePacked(
-                '<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">',
-                '<defs>',
-                    '<radialGradient id="bg" cx="50%" cy="50%" r="50%">',
-                        '<stop offset="0%" style="stop-color:', glowColor, ';stop-opacity:0.8"/>',
-                        '<stop offset="100%" style="stop-color:#f0f8ff;stop-opacity:1"/>',
-                    '</radialGradient>',
-                    '<filter id="glow">',
-                        '<feGaussianBlur stdDeviation="3" result="coloredBlur"/>',
-                        '<feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>',
-                    '</filter>',
-                '</defs>',
-                '<rect width="400" height="400" fill="url(#bg)"/>',
-                stars,
-                '<circle cx="200" cy="200" r="120" fill="', bgColor, '" opacity="0.9" filter="url(#glow)"/>',
-                '<circle cx="200" cy="200" r="100" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.7"/>',
-                '<text x="200" y="180" text-anchor="middle" font-family="Arial" font-size="20" fill="white" font-weight="bold">',
-                displayTitle,
-                '</text>',
-                '<text x="200" y="205" text-anchor="middle" font-family="Arial" font-size="14" fill="white">',
-                'Unwrapped!',
-                '</text>',
-                '<text x="200" y="225" text-anchor="middle" font-family="Arial" font-size="12" fill="white">',
-                'Original Value: ', (ethValue / 1e15).toString(), ' mETH',
-                '</text>',
-                hasTokenRewards ? 
-                    '<text x="200" y="245" text-anchor="middle" font-family="Arial" font-size="10" fill="white">+ Token Rewards</text>' : 
-                    '',
-                '<text x="200" y="270" text-anchor="middle" font-family="Arial" font-size="10" fill="white" opacity="0.8">',
-                'Token #', tokenId.toString(),
-                '</text>',
-                '</svg>'
-            )
-        );
-    }
-    
-    function generateStars(uint256 ethValue) internal pure returns (string memory) {
-        uint256 starCount = ethValue >= 1e18 ? 8 : ethValue >= 1e16 ? 5 : 3;
-        string memory stars = "";
-        
-        if (starCount >= 3) {
-            stars = string(abi.encodePacked(
-                stars,
-                '<circle cx="100" cy="100" r="2" fill="#ffff00" opacity="0.8"/>',
-                '<circle cx="300" cy="120" r="2" fill="#ffff00" opacity="0.8"/>',
-                '<circle cx="80" cy="300" r="2" fill="#ffff00" opacity="0.8"/>'
-            ));
-        }
-        if (starCount >= 5) {
-            stars = string(abi.encodePacked(
-                stars,
-                '<circle cx="320" cy="280" r="2" fill="#ffff00" opacity="0.8"/>',
-                '<circle cx="150" cy="80" r="2" fill="#ffff00" opacity="0.8"/>'
-            ));
-        }
-        if (starCount >= 8) {
-            stars = string(abi.encodePacked(
-                stars,
-                '<circle cx="60" cy="150" r="2" fill="#ffff00" opacity="0.8"/>',
-                '<circle cx="340" cy="200" r="2" fill="#ffff00" opacity="0.8"/>',
-                '<circle cx="200" cy="60" r="2" fill="#ffff00" opacity="0.8"/>'
-            ));
-        }
-        
-        return stars;
-    }
-    
-    function substring(string memory str, uint startIndex, uint endIndex) internal pure returns (string memory) {
-        bytes memory strBytes = bytes(str);
-        bytes memory result = new bytes(endIndex - startIndex);
-        for (uint i = startIndex; i < endIndex; i++) {
-            result[i - startIndex] = strBytes[i];
-        }
-        return string(result);
+    // 【修复1】移除不再需要的 _beforeTokenTransfer
+
+    // 【修复2】移除不再需要的 _burn
+
+    // 【修复3】supportsInterface：包含所有父合约
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(ERC721, ERC721Enumerable, ERC721URIStorage)
+        returns (bool)
+    {
+        return super.supportsInterface(interfaceId);
     }
 
+    // 【修复4】tokenURI：override ERC721 + ERC721URIStorage
     function tokenURI(uint256 tokenId)
         public
         view
@@ -222,10 +194,15 @@ contract UnwrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
         returns (string memory)
     {
         require(_ownerOf(tokenId) != address(0), "Token does not exist");
-        return generateTokenURI(tokenId);
+        // emit TokenURIRequested(tokenId); // Removed to comply with 'view' function constraints
+        string memory _tokenURI = super.tokenURI(tokenId);
+        if (bytes(_tokenURI).length == 0) {
+            return generateTokenURI(tokenId, bytes32(tokenId));
+        }
+        return _tokenURI;
     }
-    
-    // --- 修复 OpenZeppelin v5.0 的 override 要求 ---
+
+    // 【修复5】_update：override ERC721 + ERC721Enumerable
     function _update(address to, uint256 tokenId, address auth)
         internal
         override(ERC721, ERC721Enumerable)
@@ -234,19 +211,11 @@ contract UnwrappedPresentNFT is ERC721, ERC721URIStorage, ERC721Enumerable {
         return super._update(to, tokenId, auth);
     }
 
+    // 【修复6】_increaseBalance：override ERC721 + ERC721Enumerable
     function _increaseBalance(address account, uint128 value)
         internal
         override(ERC721, ERC721Enumerable)
     {
         super._increaseBalance(account, value);
-    }
-
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(ERC721, ERC721Enumerable, ERC721URIStorage)
-        returns (bool)
-    {
-        return super.supportsInterface(interfaceId);
     }
 }
