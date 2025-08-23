@@ -13,23 +13,25 @@ contract WrapWithERC20 is Script {
 
         // 可选：使用已有 ERC20（通过 TOKEN_ADDRESS 指定），否则部署一个 MockERC20
         address tokenAddr;
+        bool deployedLocal = false;
         try vm.envAddress("TOKEN_ADDRESS") returns (address t) {
             tokenAddr = t;
         } catch {
             vm.startBroadcast(pk);
             MockERC20 mock = new MockERC20("TestToken", "TT", 18);
             tokenAddr = address(mock);
+            deployedLocal = true;
             vm.stopBroadcast();
         }
 
         vm.startBroadcast(pk);
 
-        // 给 sender 铸造代币（如果是我们部署的 MockERC20）
-        if (_isContractDeployedByThisRun(tokenAddr)) {
+        // 仅当由本脚本部署的 MockERC20 时才铸币
+        if (deployedLocal) {
             MockERC20(tokenAddr).mint(sender, 1_000_000 ether);
         }
 
-        // 授权 Present 合约
+        // 授权 Present 合约（标准 ERC20 接口）
         MockERC20(tokenAddr).approve(presentAddr, type(uint256).max);
 
         // 组装 recipients 与 content，调用 wrapPresentTest（带元数据便于前端/Farcaster 展示）
@@ -43,11 +45,5 @@ contract WrapWithERC20 is Script {
         present.wrapPresentTest(recipients, "ERC20 Gift", "Test token wrapped via script", content);
 
         vm.stopBroadcast();
-    }
-
-    function _isContractDeployedByThisRun(address token) internal view returns (bool) {
-        uint256 size;
-        assembly { size := extcodesize(token) }
-        return size > 0;
     }
 } 

@@ -30,8 +30,8 @@ contract GenerateSamplesOnExisting is Script {
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE_EXIST] A wrapped:", _toHex(presentId));
 
-            present.unwrapPresent(presentId);
-            console.log("[SAMPLE_EXIST] A unwrapped");
+            present.claimPresent(presentId);
+            console.log("[SAMPLE_EXIST] A unwrapped by sender");
         }
 
         // B: wrap -> takeBack (recipient = sender)
@@ -61,8 +61,8 @@ contract GenerateSamplesOnExisting is Script {
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE_EXIST] C wrapped (public):", _toHex(presentId));
 
-            present.unwrapPresent(presentId);
-            console.log("[SAMPLE_EXIST] C unwrapped (public)");
+            present.claimPresent(presentId);
+            console.log("[SAMPLE_EXIST] C unwrapped by sender (public)");
         }
 
         // D: keep ACTIVE

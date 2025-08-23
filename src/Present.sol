@@ -72,6 +72,14 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";          // ERC721 接口（预留）
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol"; // ERC721 接收接口
 
+// --- 新增：分配模式定义 ---
+enum DistributionType {
+    FIRST_COME_FIRST_SERVED,      // 0: 先到先得，整包领取
+    LIMITED_QUANTITY_EQUAL_SPLIT, // 1: 限量 N 人均分（公开）
+    WHITELIST_EQUAL_SPLIT,        // 2: 按白名单人数均分
+    LIMITED_QUANTITY_RANDOM_SPLIT // 3: 限量 N 人随机（公开）
+}
+
 /**
  * @title Present
  * @dev 礼物包装、拆包和收回系统；支持 ETH 与 ERC20 托管，并通过 NFT 进行“状态凭证化”。
@@ -80,6 +88,13 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 interface IPresentNFT {
     // 最小化 NFT 铸造接口；合约只依赖 mint 行为，不关心实现细节
     function mint(address to, bytes32 presentId) external returns (uint256);
+}
+
+// --- 新增：奖品等级结构体 (用于随机模式) ---
+struct PrizeTier {
+    uint256 valuePercent;  // 该等级奖品占总资产的百分比 (精度为2, e.g., 20% 写作 2000)
+    uint256 count;         // 该等级奖品的总数量
+    uint256 claimedCount;  // 已被领取的数量
 }
 
 // 合约主体：继承 Ownable/Pausable/ReentrancyGuard 并实现 IERC721Receiver（为将来支持 ERC721 做准备）
@@ -111,13 +126,21 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     struct PresentInfo {
         bytes32 id;             // 礼物唯一 ID（哈希）
         address sender;         // 送礼人地址
-        address[] recipients;   // 接收者列表；长度为 0 表示公开礼物（任何人可拆）
+        address[] recipients;   // 接收者列表；长度为 0 表示公开礼物, 或作为白名单
         Asset[] content;        // 资产明细（ETH/代币）
         string title;           // 标题（展示用）
         string description;     // 描述（展示用）
         uint8 status;           // 状态：0 active, 1 unwrapped, 2 takenBack, 3 expired
         uint256 createdAt;      // 创建时间戳
         uint256 expiryAt;       // 过期时间戳（createdAt + defaultExpiryPeriod）
+
+        // --- 新增字段 ---
+        DistributionType distType; // 分配模式
+        uint256 claimLimit;        // 领取名额上限 (用于 LIMITED_QUANTITY 或 WHITELIST)
+        uint256 claimedCount;      // 已领取人数
+
+        // --- 新增随机分配字段 ---
+        PrizeTier[] prizeTiers; // 奖池构成 (仅用于随机模式)
     }
 
     // -----------------------------
@@ -141,6 +164,10 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     // -----------------------------
     mapping(bytes32 => PresentInfo) public presents;     // 礼物 ID → 礼物信息
     mapping(address => bool) public blacklistedTokens;    // 代币黑名单；true 表示禁止接收
+
+    // --- 新增 Mapping: 防重领 ---
+    // presentId => claimer address => has claimed?
+    mapping(bytes32 => mapping(address => bool)) public claims;
 
     // -----------------------------
     // 统计信息（用于数据面板/激励/分析）
@@ -173,7 +200,7 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
 
     // 校验可拆包：若已过期，立即标记为 EXPIRED，统计 +1 并发出事件，然后回退；
     // 若未过期，则要求当前状态为 ACTIVE 才可继续
-    modifier canUnwrap(bytes32 presentId) {
+    modifier canClaim(bytes32 presentId) {
         if (_isExpired(presentId)) {
             _setStatus(presentId, PRESENT_EXPIRED);
             totalPresentsExpired++;
@@ -181,7 +208,7 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
             revert("Present has expired");
         }
         uint8 status = _getStatus(presentId);
-        require(status == PRESENT_ACTIVE, "Present cannot be unwrapped");
+        require(status == PRESENT_ACTIVE, "Present cannot be claimed now");
         _; // 继续执行后续代码
     }
 
@@ -191,18 +218,7 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         _;
     }
 
-    // 仅允许接收者拆包；若 recipients 为空数组，表示任何人可拆
-    modifier onlyRecipient(bytes32 presentId) {
-        address[] memory recipients = _getRecipients(presentId);
-        bool isRecipient = recipients.length == 0; // 公开礼物：任何人可拆
-        if (!isRecipient) {
-            for (uint i = 0; i < recipients.length; i++) {
-                if (recipients[i] == msg.sender) { isRecipient = true; break; }
-            }
-        }
-        require(isRecipient, "Only recipient can unwrap this present");
-        _;
-    }
+    // --- 移除 onlyRecipient 修饰符, 改为内部函数 _isRecipient ---
 
     // 代币黑名单检查（当前逻辑在 _wrap 中以 require 方式实现；此修饰符预留复用）
     modifier tokenNotBlacklisted(address token) {
@@ -222,7 +238,16 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         external payable nonReentrant whenNotPaused
     {
         // 将入参映射到内部实现；标题/描述留空；emitTest=false 触发正式事件
-        _wrap({recipients: recipients, title: "", description: "", content: content, emitTest: false});
+        _wrap(WrapParams({
+            recipients: recipients,
+            title: "",
+            description: "",
+            content: content,
+            emitTest: false,
+            distType: DistributionType.FIRST_COME_FIRST_SERVED, // 默认旧模式
+            claimLimit: 1, // 旧模式总是单人领取
+            prizeTiers: new PrizeTier[](0)
+        }));
     }
 
     // 外部接口：打包礼物（带标题/描述；用于测试或演示时触发 *_Test 事件）
@@ -232,7 +257,84 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         string calldata description,
         Asset[] calldata content
     ) external payable nonReentrant whenNotPaused {
-        _wrap({recipients: recipients, title: title, description: description, content: content, emitTest: true});
+        _wrap(WrapParams({
+            recipients: recipients,
+            title: title,
+            description: description,
+            content: content,
+            emitTest: true,
+            distType: DistributionType.FIRST_COME_FIRST_SERVED, // 默认旧模式
+            claimLimit: 1, // 旧模式总是单人领取
+            prizeTiers: new PrizeTier[](0)
+        }));
+    }
+
+    // --- 新增：支持分配模式的打包接口 ---
+    function wrapPresentWithOptions(
+        address[] calldata _recipients,
+        Asset[] calldata _content,
+        DistributionType _distType,
+        uint256 _claimLimit
+    ) external payable nonReentrant whenNotPaused {
+        if (_distType == DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT) {
+            require(_claimLimit > 0, "Claim limit must be positive");
+            require(_recipients.length == 0, "Recipients list must be empty for limited quantity mode");
+        } else if (_distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
+            require(_recipients.length > 0, "Recipients list cannot be empty for whitelist mode");
+            require(_claimLimit == 0 || _claimLimit == _recipients.length, "Invalid claim limit for whitelist mode");
+        }
+
+        _wrap(WrapParams({
+            recipients: _recipients,
+            title: "",
+            description: "",
+            content: _content,
+            emitTest: false,
+            distType: _distType,
+            claimLimit: _claimLimit,
+            prizeTiers: new PrizeTier[](0)
+        }));
+    }
+
+    // --- 新增：创建随机分配礼物的接口 ---
+    function wrapPresentRandom(
+        Asset[] calldata _content,
+        PrizeTier[] calldata _prizeTiers
+    ) external payable nonReentrant whenNotPaused {
+        uint256 totalPercent = 0;
+        uint256 totalClaimLimit = 0;
+        for (uint i = 0; i < _prizeTiers.length; i++) {
+            require(_prizeTiers[i].count > 0, "Tier count must be positive");
+            require(_prizeTiers[i].valuePercent > 0, "Tier value must be positive");
+            totalPercent += _prizeTiers[i].valuePercent * _prizeTiers[i].count;
+            totalClaimLimit += _prizeTiers[i].count;
+        }
+        // 校验总百分比是否为 100% (使用我们设定的精度)
+        require(totalPercent == 10000, "Total percentage must be 100%");
+        require(totalClaimLimit > 0, "Must have at least one prize");
+
+        _wrap(WrapParams({
+            recipients: new address[](0), // 随机模式总是公开的
+            title: "",
+            description: "",
+            content: _content,
+            emitTest: false,
+            distType: DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT,
+            claimLimit: totalClaimLimit,
+            prizeTiers: _prizeTiers
+        }));
+    }
+
+    // --- 新增：打包参数结构体，防堆栈溢出 ---
+    struct WrapParams {
+        address[] recipients;
+        string title;
+        string description;
+        Asset[] content;
+        bool emitTest;
+        DistributionType distType;
+        uint256 claimLimit;
+        PrizeTier[] prizeTiers;
     }
 
     // ------------------------------------------------------------------------
@@ -240,34 +342,28 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     // 步骤：校验 → 计算所需 ETH → 生成 ID → 托管 ERC20 → 写存储 → 统计 → 铸 NFT → 事件 → 退款
     // 注意：遵循 Checks-Effects-Interactions，先写入状态再进行外部交互
     // ------------------------------------------------------------------------
-    function _wrap(
-        address[] calldata recipients,
-        string memory title,
-        string memory description,
-        Asset[] calldata content,
-        bool emitTest
-    ) internal {
+    function _wrap(WrapParams memory params) internal {
         // 1) 基本参数与风控校验
-        require(content.length > 0 && content.length <= maxAssetCount, "Invalid content size");
-        require(recipients.length <= maxRecipientCount, "Too many recipients");
+        require(params.content.length > 0 && params.content.length <= maxAssetCount, "Invalid content size");
+        require(params.recipients.length <= maxRecipientCount, "Too many recipients");
 
         // 统计礼物中的 ETH 需求总额（address(0) 代表 ETH）
         uint256 ethValue = 0;
-        for (uint i = 0; i < content.length; i++) {
-            require(!blacklistedTokens[content[i].tokens], "Contains blacklisted token"); // 黑名单校验
-            if (content[i].tokens == address(0)) { ethValue += content[i].amounts; }        // 累加 ETH 需求
-            require(content[i].amounts > 0, "Amount must be positive");                    // 金额必须为正
+        for (uint i = 0; i < params.content.length; i++) {
+            require(!blacklistedTokens[params.content[i].tokens], "Contains blacklisted token"); // 黑名单校验
+            if (params.content[i].tokens == address(0)) { ethValue += params.content[i].amounts; }        // 累加 ETH 需求
+            require(params.content[i].amounts > 0, "Amount must be positive");                    // 金额必须为正
         }
         require(msg.value >= ethValue, "Insufficient ETH sent"); // 确保随交易附带的 ETH 足够覆盖
 
         // 2) 生成唯一礼物 ID，并校验未被占用
-        bytes32 presentId = generatePresentId(recipients, content);
+        bytes32 presentId = generatePresentId(params.recipients, params.content);
         require(presents[presentId].sender == address(0), "Present ID exists");
 
         // 3) 托管 ERC20（需要发送者在调用前对本合约进行 approve）
-        for (uint i = 0; i < content.length; i++) {
-            if (content[i].tokens != address(0)) {
-                IERC20(content[i].tokens).safeTransferFrom(msg.sender, address(this), content[i].amounts);
+        for (uint i = 0; i < params.content.length; i++) {
+            if (params.content[i].tokens != address(0)) {
+                IERC20(params.content[i].tokens).safeTransferFrom(msg.sender, address(this), params.content[i].amounts);
             }
         }
 
@@ -275,13 +371,32 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         PresentInfo storage p = presents[presentId];
         p.id = presentId;
         p.sender = msg.sender;
-        p.recipients = recipients;   // calldata → storage 复制
-        p.title = title;
-        p.description = description;
+        p.recipients = params.recipients;   // calldata → storage 复制
+        p.title = params.title;
+        p.description = params.description;
         p.status = PRESENT_ACTIVE;
         p.createdAt = block.timestamp;
         p.expiryAt = block.timestamp + defaultExpiryPeriod;
-        for (uint i2 = 0; i2 < content.length; i2++) { p.content.push(content[i2]); }
+        for (uint i2 = 0; i2 < params.content.length; i2++) { p.content.push(params.content[i2]); }
+
+        // --- 存储新增字段 ---
+        p.distType = params.distType;
+        if (params.distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
+            p.claimLimit = params.recipients.length; // 白名单模式下，上限即名单长度
+        } else {
+            p.claimLimit = params.claimLimit;
+        }
+        p.claimedCount = 0;
+
+        if (params.distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            for (uint i3 = 0; i3 < params.prizeTiers.length; i3++) {
+                p.prizeTiers.push(PrizeTier({
+                    valuePercent: params.prizeTiers[i3].valuePercent,
+                    count: params.prizeTiers[i3].count,
+                    claimedCount: 0
+                }));
+            }
+        }
 
         // 5) 统计
         totalPresentsWrapped++;
@@ -293,7 +408,7 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         }
 
         // 7) 事件（测试或正式）
-        if (emitTest) emit WrapPresentTest(presentId, msg.sender);
+        if (params.emitTest) emit WrapPresentTest(presentId, msg.sender);
         else emit WrapPresent(presentId, msg.sender);
 
         // 8) 退回多余 ETH（若 msg.value 超过所需 ethValue）
@@ -304,29 +419,94 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     }
 
     // ------------------------------------------------------------------------
-    // 外部接口：拆包领取（必须：礼物存在、未过期、状态允许、具备接收资格）
+    // 外部接口：领取礼物 (Claim Present) - 已重构
     // 顺序：状态更新 → 统计 → 资产转移 → 可选铸 NFT → 事件
     // ------------------------------------------------------------------------
-    function unwrapPresent(bytes32 presentId)
-        external nonReentrant whenNotPaused presentExists(presentId) canUnwrap(presentId) onlyRecipient(presentId)
+    function claimPresent(bytes32 presentId)
+        external nonReentrant whenNotPaused presentExists(presentId) canClaim(presentId)
     {
-        _setStatus(presentId, PRESENT_UNWRAPPED);     // 状态：已拆包
-        totalPresentsUnwrapped++;                     // 系统统计
-        userUnwrappedCount[msg.sender]++;             // 用户统计
-        _transferAssets(presentId, msg.sender);       // 将礼物中的资产全部转给调用者
-        if (unwrappedNFT != address(0)) { IPresentNFT(unwrappedNFT).mint(msg.sender, presentId); }
-        emit UnwrapPresent(presentId, msg.sender);    // 事件
-    }
+        PresentInfo storage p = presents[presentId];
+        
+        // 1. 统一校验：是否已领取
+        require(!claims[presentId][msg.sender], "Already claimed");
 
-    // 测试/演示版本（触发 *_Test 事件）
-    function unwrapPresentTest(bytes32 presentId)
-        external nonReentrant whenNotPaused presentExists(presentId) canUnwrap(presentId) onlyRecipient(presentId)
-    {
-        _setStatus(presentId, PRESENT_UNWRAPPED);
+        DistributionType distType = p.distType;
+        
+        // 2. 根据不同模式执行不同逻辑
+        if (distType == DistributionType.FIRST_COME_FIRST_SERVED) {
+            // --- 兼容旧逻辑 ---
+            require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
+            _transferAssets(presentId, msg.sender); // 转移全部资产
+        } 
+        else if (distType == DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT) {
+            // --- 限量均分逻辑 ---
+            require(p.claimedCount < p.claimLimit, "All shares have been claimed");
+            _transferShare(presentId, msg.sender); // 转移计算后的份额
+        }
+        else if (distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
+            // --- 白名单均分逻辑 ---
+            require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
+            _transferShare(presentId, msg.sender); // 转移计算后的份额
+        }
+        else if (distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            // --- 限量随机逻辑 ---
+            require(p.claimedCount < p.claimLimit, "All prizes have been claimed");
+            _transferRandomShare(presentId, msg.sender);
+        }
+
+        // 3. 更新状态
+        claims[presentId][msg.sender] = true;
+        p.claimedCount++;
+
+        if (p.claimedCount >= p.claimLimit) {
+            // 如果已领完，更新最终状态
+            p.status = PRESENT_UNWRAPPED; // 标记为已领完
+        }
+        
+        // 4. 统计、事件和 NFT
         totalPresentsUnwrapped++;
         userUnwrappedCount[msg.sender]++;
-        _transferAssets(presentId, msg.sender);
         if (unwrappedNFT != address(0)) { IPresentNFT(unwrappedNFT).mint(msg.sender, presentId); }
+        emit UnwrapPresent(presentId, msg.sender); // 复用旧事件
+    }
+
+    // --- 旧的 unwrapPresent/unwrapPresentTest 函数已移除或重构为 claimPresent/claimPresentTest ---
+
+    // 测试/演示版本
+    function claimPresentTest(bytes32 presentId)
+        external nonReentrant whenNotPaused presentExists(presentId) canClaim(presentId)
+    {
+        PresentInfo storage p = presents[presentId];
+        require(!claims[presentId][msg.sender], "Already claimed");
+
+        DistributionType distType = p.distType;
+        
+        if (distType == DistributionType.FIRST_COME_FIRST_SERVED) {
+            require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
+            _transferAssets(presentId, msg.sender);
+        } else if (distType == DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT) {
+            require(p.claimedCount < p.claimLimit, "All shares have been claimed");
+            _transferShare(presentId, msg.sender);
+        } else if (distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
+            require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
+            _transferShare(presentId, msg.sender);
+        }
+        else if (distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            require(p.claimedCount < p.claimLimit, "All prizes have been claimed");
+            _transferRandomShare(presentId, msg.sender);
+        }
+
+        claims[presentId][msg.sender] = true;
+        p.claimedCount++;
+
+        if (p.claimedCount >= p.claimLimit) {
+            p.status = PRESENT_UNWRAPPED;
+        }
+
+        totalPresentsUnwrapped++;
+        userUnwrappedCount[msg.sender]++;
+        if (unwrappedNFT != address(0)) { IPresentNFT(unwrappedNFT).mint(msg.sender, presentId); }
+        
         emit UnwrapPresentTest(presentId, msg.sender);
     }
 
@@ -339,9 +519,22 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         external nonReentrant whenNotPaused presentExists(presentId) onlySender(presentId)
     {
         require(_canTakeBack(presentId), "Cannot take back: gift is unwrapped or not expired");
-        _setStatus(presentId, PRESENT_TAKEN_BACK);
+        
         totalPresentsTakenBack++;
-        _transferAssets(presentId, msg.sender);
+
+        PresentInfo storage p = presents[presentId];
+        // 如果是部分领取的礼物，只收回剩余资产
+        if (p.distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            _transferRemainingRandomAssets(presentId, msg.sender);
+        } else if (p.distType != DistributionType.FIRST_COME_FIRST_SERVED && p.claimedCount > 0) {
+            _transferRemainingAssets(presentId, msg.sender);
+        } else {
+            // 如果是未被动过的礼物，直接转移全部资产
+            _transferAssets(presentId, msg.sender);
+        }
+        
+        // 必须在转账后更新状态，防止重入takeBack未领取的礼物
+        _setStatus(presentId, PRESENT_TAKEN_BACK);
         emit TakeBack(presentId, msg.sender);
     }
 
@@ -350,9 +543,21 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         external nonReentrant whenNotPaused presentExists(presentId) onlySender(presentId)
     {
         require(_canTakeBack(presentId), "Cannot take back: gift is unwrapped or not expired");
-        _setStatus(presentId, PRESENT_TAKEN_BACK);
+        
         totalPresentsTakenBack++;
-        _transferAssets(presentId, msg.sender);
+        
+        PresentInfo storage p = presents[presentId];
+        // 如果是部分领取的礼物，只收回剩余资产
+        if (p.distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            _transferRemainingRandomAssets(presentId, msg.sender);
+        } else if (p.distType != DistributionType.FIRST_COME_FIRST_SERVED && p.claimedCount > 0) {
+            _transferRemainingAssets(presentId, msg.sender);
+        } else {
+            // 如果是未被动过的礼物，直接转移全部资产
+            _transferAssets(presentId, msg.sender);
+        }
+        
+        _setStatus(presentId, PRESENT_TAKEN_BACK);
         emit TakeBackTest(presentId, msg.sender);
     }
 
@@ -386,7 +591,23 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         return presents[presentId].recipients;
     }
 
-    // 只读过期判断（被 canUnwrap/_getStatus 等调用）
+    // --- 新增：内部函数，判断调用者是否为接收人 ---
+    function _isRecipient(bytes32 presentId, address user) internal view returns (bool) {
+        address[] memory recipients = _getRecipients(presentId);
+        // 对于非白名单模式，如果recipients为空，则为公开
+        if (presents[presentId].distType != DistributionType.WHITELIST_EQUAL_SPLIT && recipients.length == 0) {
+            return true;
+        }
+        // 对于白名单模式，或定向的先到先得模式
+        for (uint i = 0; i < recipients.length; i++) {
+            if (recipients[i] == user) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 只读过期判断（被 canClaim/_getStatus 等调用）
     function _isExpired(bytes32 presentId) internal view returns (bool) {
         return (presents[presentId].expiryAt > 0 && block.timestamp > presents[presentId].expiryAt);
     }
@@ -398,21 +619,41 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         external view
         returns (
             address sender,
-            address[] memory recipients,
-            Asset[] memory content,
             string memory title,
             string memory description,
             uint8 status,
-            uint256 expiryAt
+            uint256 expiryAt,
+            DistributionType distType,
+            uint256 claimLimit,
+            uint256 claimedCount
         )
     {
         PresentInfo storage p = presents[presentId];
-        return (p.sender, p.recipients, p.content, p.title, p.description, _getStatus(presentId), p.expiryAt);
+        return (
+            p.sender,
+            p.title,
+            p.description,
+            _getStatus(presentId),
+            p.expiryAt,
+            p.distType,
+            p.claimLimit,
+            p.claimedCount
+        );
     }
 
     // 仅返回资产明细（减少无关字段传输）
     function getPresentContent(bytes32 presentId) external view returns (Asset[] memory) {
         return presents[presentId].content;
+    }
+
+    // --- 新增：获取接收人列表 ---
+    function getPresentRecipients(bytes32 presentId) external view returns (address[] memory) {
+        return presents[presentId].recipients;
+    }
+
+    // --- 新增：获取奖池配置 ---
+    function getPresentPrizeTiers(bytes32 presentId) external view returns (PrizeTier[] memory) {
+        return presents[presentId].prizeTiers;
     }
 
     // 仅返回逻辑状态码
@@ -425,7 +666,7 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     // 基于（发送者/收件人数组/资产数组/时间戳/随机熵/本合约地址）生成 keccak256 哈希；
     // 使用 abi.encode（非 encodePacked）以减少编码歧义。
     // ------------------------------------------------------------------------
-    function generatePresentId(address[] calldata recipients, Asset[] calldata content)
+    function generatePresentId(address[] memory recipients, Asset[] memory content)
         internal view returns (bytes32)
     {
         return keccak256(abi.encode(
@@ -451,6 +692,147 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
                 require(success, "ETH transfer failed");
             } else {
                 IERC20(assets[i].tokens).safeTransfer(recipient, assets[i].amounts);
+            }
+        }
+    }
+
+    // --- 新增：按份转移资产，并处理余数 ---
+    function _transferShare(bytes32 presentId, address recipient) private {
+        PresentInfo storage p = presents[presentId];
+        Asset[] memory assets = p.content;
+        uint256 totalShares = p.claimLimit;
+        uint256 claimedShares = p.claimedCount;
+
+        for (uint i = 0; i < assets.length; i++) {
+            uint256 totalAmount = assets[i].amounts;
+            uint256 amountToTransfer;
+
+            // 关键：余数处理
+            // 如果是最后一份，把剩余的全部给他，避免因除法精度导致资产锁死在合约里
+            if (claimedShares + 1 == totalShares) {
+                uint256 amountClaimedSoFar = (totalAmount / totalShares) * claimedShares;
+                amountToTransfer = totalAmount - amountClaimedSoFar;
+            } else {
+                amountToTransfer = totalAmount / totalShares;
+            }
+
+            if (amountToTransfer > 0) {
+                if (assets[i].tokens == address(0)) {
+                    (bool success, ) = payable(recipient).call{value: amountToTransfer}("");
+                    require(success, "ETH transfer failed");
+                } else {
+                    IERC20(assets[i].tokens).safeTransfer(recipient, amountToTransfer);
+                }
+            }
+        }
+    }
+
+    // --- 新增：转移剩余资产 (用于 takeBack) ---
+    function _transferRemainingAssets(bytes32 presentId, address recipient) private {
+        PresentInfo storage p = presents[presentId];
+        Asset[] memory assets = p.content;
+        uint256 totalShares = p.claimLimit;
+        uint256 claimedShares = p.claimedCount;
+
+        if (claimedShares >= totalShares) { return; } // 已全部领完，无剩余
+
+        for (uint i = 0; i < assets.length; i++) {
+            uint256 totalAmount = assets[i].amounts;
+            uint256 amountClaimedSoFar = (totalAmount / totalShares) * claimedShares;
+            uint256 remainingAmount = totalAmount - amountClaimedSoFar;
+
+            if (remainingAmount > 0) {
+                if (assets[i].tokens == address(0)) {
+                    (bool success, ) = payable(recipient).call{value: remainingAmount}("");
+                    require(success, "ETH transfer failed");
+                } else {
+                    IERC20(assets[i].tokens).safeTransfer(recipient, remainingAmount);
+                }
+            }
+        }
+    }
+
+    // --- 新增：转移剩余资产 (用于 takeBack 的随机模式) ---
+    function _transferRemainingRandomAssets(bytes32 presentId, address recipient) private {
+        PresentInfo storage p = presents[presentId];
+        uint256 remainingPercent = 0;
+        for (uint i = 0; i < p.prizeTiers.length; i++) {
+            uint256 unclaimedInTier = p.prizeTiers[i].count - p.prizeTiers[i].claimedCount;
+            if (unclaimedInTier > 0) {
+                remainingPercent += p.prizeTiers[i].valuePercent * unclaimedInTier;
+            }
+        }
+
+        if (remainingPercent > 0) {
+            for (uint i = 0; i < p.content.length; i++) {
+                uint256 totalAmount = p.content[i].amounts;
+                uint256 remainingAmount = (totalAmount * remainingPercent) / 10000;
+                if (remainingAmount > 0) {
+                    if (p.content[i].tokens == address(0)) {
+                        (bool success, ) = payable(recipient).call{value: remainingAmount}("");
+                        require(success, "ETH transfer failed");
+                    } else {
+                        IERC20(p.content[i].tokens).safeTransfer(recipient, remainingAmount);
+                    }
+                }
+            }
+        }
+    }
+
+    // --- 新增：伪随机数生成器 ---
+    function _getPseudoRandomNumber(bytes32 presentId) private view returns (uint256) {
+        PresentInfo storage p = presents[presentId];
+        return uint256(keccak256(abi.encodePacked(
+            block.prevrandao,
+            block.timestamp,
+            msg.sender,
+            presentId,
+            p.claimedCount // 每次领取后此值都不同
+        )));
+    }
+
+    // --- 新增：随机份额转移逻辑 ---
+    function _transferRandomShare(bytes32 presentId, address recipient) private {
+        PresentInfo storage p = presents[presentId];
+        uint256 remainingPrizes = p.claimLimit - p.claimedCount;
+        
+        // 1. 获取随机数
+        uint256 rand = _getPseudoRandomNumber(presentId);
+        
+        // 2. 随机选择一个“坑位”，然后在奖池中找到这个坑位对应的奖品
+        uint256 prizeIndex = rand % remainingPrizes; // 在剩余的奖品中选择一个
+        
+        uint256 selectedTier;
+        uint256 cumulativeCount = 0;
+        
+        // 3. 遍历奖池，找到被选中的奖品等级
+        // 这个循环的逻辑是为了从所有未领取的奖品中公平地选择一个
+        for (uint i = 0; i < p.prizeTiers.length; i++) {
+            uint256 availableInTier = p.prizeTiers[i].count - p.prizeTiers[i].claimedCount;
+            if (prizeIndex < cumulativeCount + availableInTier) {
+                selectedTier = i;
+                break;
+            }
+            cumulativeCount += availableInTier;
+        }
+        
+        // 4. 标记该等级奖品已被领取一个
+        p.prizeTiers[selectedTier].claimedCount++;
+        
+        // 5. 计算并转移资产
+        uint256 percent = p.prizeTiers[selectedTier].valuePercent;
+        for (uint i = 0; i < p.content.length; i++) {
+            uint256 totalAmount = p.content[i].amounts;
+            // 计算金额时，要考虑精度 (例如 valuePercent=2000 代表 20.00%)
+            uint256 amountToTransfer = (totalAmount * percent) / 10000; 
+
+            if (amountToTransfer > 0) {
+                if (p.content[i].tokens == address(0)) {
+                    (bool success, ) = payable(recipient).call{value: amountToTransfer}("");
+                    require(success, "ETH transfer failed");
+                } else {
+                    IERC20(p.content[i].tokens).safeTransfer(recipient, amountToTransfer);
+                }
             }
         }
     }

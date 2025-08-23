@@ -152,7 +152,7 @@ contract PresentTest is Test {
     }
     
     // 测试拆开礼物
-    function test_UnwrapPresent() public {
+    function test_ClaimPresent() public {
         // 先创建礼物
         bytes32 presentId = createMixedPresent();
         
@@ -162,7 +162,7 @@ contract PresentTest is Test {
         
         // 拆开礼物
         vm.prank(recipient1);
-        present.unwrapPresent(presentId);
+        present.claimPresent(presentId);
         
         // 验证资产转移
         assertEq(recipient1.balance, recipient1EthBefore + ETH_AMOUNT, "Recipient should receive ETH");
@@ -181,29 +181,29 @@ contract PresentTest is Test {
     }
     
     // 测试未授权拆开礼物
-    function test_UnwrapPresent_Unauthorized() public {
+    function test_ClaimPresent_Unauthorized() public {
         // 先创建礼物
         bytes32 presentId = createMixedPresent();
         
         // 非接收者尝试拆开
         vm.prank(nonRecipient);
-        vm.expectRevert("Only recipient can unwrap this present");
-        present.unwrapPresent(presentId);
+        vm.expectRevert("Only recipient can claim");
+        present.claimPresent(presentId);
     }
     
     // 测试已拆开礼物不能再次拆开
-    function test_UnwrapPresent_AlreadyUnwrapped() public {
+    function test_ClaimPresent_AlreadyUnwrapped() public {
         // 先创建礼物
         bytes32 presentId = createMixedPresent();
         
         // 第一次拆开礼物
         vm.prank(recipient1);
-        present.unwrapPresent(presentId);
+        present.claimPresent(presentId);
         
         // 尝试第二次拆开
         vm.prank(recipient1);
-        vm.expectRevert("Present cannot be unwrapped");
-        present.unwrapPresent(presentId);
+        vm.expectRevert("Present cannot be claimed now");
+        present.claimPresent(presentId);
     }
     
     // 测试收回礼物
@@ -249,7 +249,7 @@ contract PresentTest is Test {
         
         // 拆开礼物
         vm.prank(recipient1);
-        present.unwrapPresent(presentId);
+        present.claimPresent(presentId);
         
         // 尝试收回已拆开的礼物
         vm.prank(sender);
@@ -286,7 +286,7 @@ contract PresentTest is Test {
         // 接收者尝试拆开过期礼物
         vm.prank(recipient1);
         vm.expectRevert("Present has expired");
-        present.unwrapPresent(presentId);
+        present.claimPresent(presentId);
         
         // 发送者可以收回过期礼物
         vm.prank(sender);
@@ -506,7 +506,7 @@ contract PresentTest is Test {
         
         // 非指定接收者也可以领取
         vm.prank(nonRecipient);
-        present.unwrapPresent(presentId);
+        present.claimPresent(presentId);
         
         assertEq(token1.balanceOf(nonRecipient), TOKEN1_AMOUNT, "Non-recipient should receive tokens");
     }
@@ -553,10 +553,10 @@ contract PresentTest is Test {
         // 检查礼物状态
         assertEq(uint8(present.getPresentStatus(presentId)), 3, "Present should be expired");
         
-        // 接收者尝试拆开过期礼物
+        // 尝试拆开已强制过期的礼物
         vm.prank(recipient1);
-        vm.expectRevert("Present cannot be unwrapped");
-        present.unwrapPresent(presentId);
+        vm.expectRevert("Present cannot be claimed now");
+        present.claimPresent(presentId);
     }
     
     // 测试非所有者不能强制过期礼物
@@ -587,7 +587,7 @@ contract PresentTest is Test {
         
         // 拆开礼物
         vm.prank(recipient1);
-        present.unwrapPresent(presentId);
+        present.claimPresent(presentId);
         
         // 尝试强制过期已拆开的礼物
         vm.prank(owner);

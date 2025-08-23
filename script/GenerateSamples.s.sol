@@ -31,7 +31,7 @@ contract GenerateSamples is Script {
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE] A wrapped:", _toHex(presentId));
 
-            present.unwrapPresent(presentId);
+            present.claimPresent(presentId);
             console.log("[SAMPLE] A unwrapped by sender");
         }
 
@@ -62,7 +62,7 @@ contract GenerateSamples is Script {
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE] C wrapped (public):", _toHex(presentId));
 
-            present.unwrapPresent(presentId);
+            present.claimPresent(presentId);
             console.log("[SAMPLE] C unwrapped by sender (public)");
         }
 
@@ -77,6 +77,66 @@ contract GenerateSamples is Script {
             present.wrapPresent{value: 0.0002 ether}(recipients, assets);
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE] D wrapped (left active):", _toHex(presentId));
+        }
+
+        // 6) 样例 E: 白名单均分
+        {
+            address alice = vm.addr(100);
+            address bob = vm.addr(101);
+            address[] memory recipients = new address[](3);
+            recipients[0] = sender;
+            recipients[1] = alice;
+            recipients[2] = bob;
+
+            Present.Asset[] memory assets = new Present.Asset[](1);
+            assets[0] = Present.Asset(address(0), 0.0006 ether);
+
+            vm.recordLogs();
+            present.wrapPresentWithOptions{value: 0.0006 ether}(
+                recipients, assets, Present.DistributionType.WHITELIST_EQUAL_SPLIT, 0
+            );
+            bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
+            console.log("[SAMPLE] E wrapped (whitelist split):", _toHex(presentId));
+            
+            // 模拟 sender 和 alice 领取
+            present.claimPresent(presentId);
+            console.log("[SAMPLE] E claimed by sender");
+            vm.prank(alice);
+            present.claimPresent(presentId);
+            console.log("[SAMPLE] E claimed by alice (bob can still claim)");
+        }
+
+        // 7) 样例 F: 限量均分 (公开抢)
+        {
+            Present.Asset[] memory assets = new Present.Asset[](1);
+            assets[0] = Present.Asset(address(0), 0.001 ether);
+            
+            vm.recordLogs();
+            present.wrapPresentWithOptions{value: 0.001 ether}(
+                new address[](0), assets, Present.DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT, 10
+            );
+            bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
+            console.log("[SAMPLE] F wrapped (limited quantity split):", _toHex(presentId));
+        }
+
+        // 8) 样例 G: 限量随机
+        {
+            Present.Asset[] memory assets = new Present.Asset[](1);
+            assets[0] = Present.Asset(address(0), 0.01 ether); // 100%
+
+            Present.PrizeTier[] memory prizeTiers = new Present.PrizeTier[](3);
+            // 大奖: 1份, 50%
+            prizeTiers[0] = Present.PrizeTier({ valuePercent: 5000, count: 1, claimedCount: 0 });
+            // 中奖: 2份, 15% each (30%)
+            prizeTiers[1] = Present.PrizeTier({ valuePercent: 1500, count: 2, claimedCount: 0 });
+            // 小奖: 4份, 5% each (20%)
+            prizeTiers[2] = Present.PrizeTier({ valuePercent: 500, count: 4, claimedCount: 0 });
+            // Total: 1+2+4=7 prizes, 50+30+20=100%
+
+            vm.recordLogs();
+            present.wrapPresentRandom{value: 0.01 ether}(assets, prizeTiers);
+            bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
+            console.log("[SAMPLE] G wrapped (random split):", _toHex(presentId));
         }
 
         vm.stopBroadcast();

@@ -35,6 +35,56 @@
   },
   {
     "type": "function",
+    "name": "claimPresent",
+    "inputs": [
+      {
+        "name": "presentId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimPresentTest",
+    "inputs": [
+      {
+        "name": "presentId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claims",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "defaultExpiryPeriod",
     "inputs": [],
     "outputs": [
@@ -94,28 +144,6 @@
         "internalType": "address"
       },
       {
-        "name": "recipients",
-        "type": "address[]",
-        "internalType": "address[]"
-      },
-      {
-        "name": "content",
-        "type": "tuple[]",
-        "internalType": "struct Present.Asset[]",
-        "components": [
-          {
-            "name": "tokens",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amounts",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
         "name": "title",
         "type": "string",
         "internalType": "string"
@@ -132,6 +160,21 @@
       },
       {
         "name": "expiryAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "distType",
+        "type": "uint8",
+        "internalType": "enum DistributionType"
+      },
+      {
+        "name": "claimLimit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimedCount",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -165,6 +208,61 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPresentPrizeTiers",
+    "inputs": [
+      {
+        "name": "presentId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple[]",
+        "internalType": "struct PrizeTier[]",
+        "components": [
+          {
+            "name": "valuePercent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "count",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimedCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPresentRecipients",
+    "inputs": [
+      {
+        "name": "presentId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -358,6 +456,21 @@
         "name": "expiryAt",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "distType",
+        "type": "uint8",
+        "internalType": "enum DistributionType"
+      },
+      {
+        "name": "claimLimit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimedCount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -505,32 +618,6 @@
   },
   {
     "type": "function",
-    "name": "unwrapPresent",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "unwrapPresentTest",
-    "inputs": [
-      {
-        "name": "presentId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "unwrappedNFT",
     "inputs": [],
     "outputs": [
@@ -635,6 +722,53 @@
   },
   {
     "type": "function",
+    "name": "wrapPresentRandom",
+    "inputs": [
+      {
+        "name": "_content",
+        "type": "tuple[]",
+        "internalType": "struct Present.Asset[]",
+        "components": [
+          {
+            "name": "tokens",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amounts",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "_prizeTiers",
+        "type": "tuple[]",
+        "internalType": "struct PrizeTier[]",
+        "components": [
+          {
+            "name": "valuePercent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "count",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimedCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "wrapPresentTest",
     "inputs": [
       {
@@ -668,6 +802,46 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "wrapPresentWithOptions",
+    "inputs": [
+      {
+        "name": "_recipients",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "_content",
+        "type": "tuple[]",
+        "internalType": "struct Present.Asset[]",
+        "components": [
+          {
+            "name": "tokens",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amounts",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "_distType",
+        "type": "uint8",
+        "internalType": "enum DistributionType"
+      },
+      {
+        "name": "_claimLimit",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
