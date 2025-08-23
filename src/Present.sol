@@ -77,7 +77,7 @@ enum DistributionType {
     FIRST_COME_FIRST_SERVED,      // 0: 先到先得，整包领取
     LIMITED_QUANTITY_EQUAL_SPLIT, // 1: 限量 N 人均分（公开）
     WHITELIST_EQUAL_SPLIT,        // 2: 按白名单人数均分
-    LIMITED_QUANTITY_RANDOM_SPLIT // 3: 限量 N 人均分（公开），与 1 功能一致，仅为语义区分
+    LIMITED_QUANTITY_RANDOM_SPLIT // 3: 限量 N 人随机（公开）
 }
 
 /**
@@ -132,7 +132,8 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         uint256 claimLimit;        // 领取名额上限 (用于 LIMITED_QUANTITY 或 WHITELIST)
         uint256 claimedCount;      // 已领取人数
 
-        // --- 随机分配相关的字段 (prizeTiers) 已被移除 ---
+        // --- 新增：用于随机模式下追踪剩余资产 ---
+        Asset[] contentRemaining;
     }
 
     // -----------------------------
@@ -272,7 +273,6 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
             // “限量均分”或“随机”模式，必须指定一个正数上限，且接收人列表为空
             require(params.claimLimit > 0, "Claim limit must be positive");
             require(params.recipients.length == 0, "Recipients list must be empty for this mode");
-            finalClaimLimit = params.claimLimit;
         } else if (params.distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
             // “白名单”模式，接收人列表不能为空，且 claimLimit 会被强制设为名单长度
             require(params.recipients.length > 0, "Recipients list cannot be empty for whitelist mode");
@@ -320,6 +320,11 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         p.claimLimit = finalClaimLimit; // 使用经过验证和计算后的最终领取上限
         p.claimedCount = 0;
 
+        // --- 新增：初始化剩余资产追踪器 ---
+        for (uint i4 = 0; i4 < params.content.length; i4++) {
+            p.contentRemaining.push(params.content[i4]);
+        }
+
         // 5) 统计
         totalPresentsWrapped++;
         userWrappedCount[msg.sender]++;
@@ -359,8 +364,8 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
             require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
             _transferAssets(presentId, msg.sender); // 转移全部资产
         } 
-        else if (distType == DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT || distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
-            // --- 限量均分或随机逻辑 (功能已统一) ---
+        else if (distType == DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT) {
+            // --- 限量均分逻辑 ---
             require(p.claimedCount < p.claimLimit, "All shares have been claimed");
             _transferShare(presentId, msg.sender); // 转移计算后的份额
         }
@@ -368,6 +373,11 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
             // --- 白名单均分逻辑 ---
             require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
             _transferShare(presentId, msg.sender); // 转移计算后的份额
+        }
+        else if (distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            // --- 限量随机逻辑 ---
+            require(p.claimedCount < p.claimLimit, "All shares have been claimed");
+            _transferRandomShare(presentId, msg.sender);
         }
 
         // 3. 更新状态
@@ -402,8 +412,12 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
 
         PresentInfo storage p = presents[presentId];
         // 如果是部分领取的礼物，只收回剩余资产
-        if (p.distType != DistributionType.FIRST_COME_FIRST_SERVED && p.claimedCount > 0) {
-            _transferRemainingAssets(presentId, msg.sender);
+        if (p.claimedCount > 0) {
+            if (p.distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+                _transferRemainingRandomAssets(presentId, msg.sender);
+            } else if (p.distType != DistributionType.FIRST_COME_FIRST_SERVED) {
+                _transferRemainingAssets(presentId, msg.sender);
+            }
         } else {
             // 如果是未被动过的礼物，直接转移全部资产
             _transferAssets(presentId, msg.sender);
@@ -597,6 +611,87 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
                     require(success, "ETH transfer failed");
                 } else {
                     IERC20(assets[i].tokens).safeTransfer(recipient, remainingAmount);
+                }
+            }
+        }
+    }
+
+    // --- 新增：转移剩余资产 (用于 takeBack 的随机模式) ---
+    function _transferRemainingRandomAssets(bytes32 presentId, address recipient) private {
+        PresentInfo storage p = presents[presentId];
+        for (uint i = 0; i < p.contentRemaining.length; i++) {
+            uint256 remainingAmount = p.contentRemaining[i].amounts;
+            if (remainingAmount > 0) {
+                address token = p.contentRemaining[i].tokens;
+                if (token == address(0)) {
+                    (bool success, ) = payable(recipient).call{value: remainingAmount}("");
+                    require(success, "ETH transfer failed");
+                } else {
+                    IERC20(token).safeTransfer(recipient, remainingAmount);
+                }
+            }
+        }
+    }
+
+    // --- 新增：伪随机数生成器 ---
+    function _getPseudoRandomNumber(bytes32 presentId, uint256 salt) private view returns (uint256) {
+        PresentInfo storage p = presents[presentId];
+        return uint256(keccak256(abi.encodePacked(
+            block.prevrandao,
+            block.timestamp,
+            msg.sender,
+            presentId,
+            p.claimedCount,
+            salt // 确保在同一次领取中，不同资产的随机数也不同
+        )));
+    }
+
+    // --- 新增：随机红包份额转移逻辑 ---
+    function _transferRandomShare(bytes32 presentId, address recipient) private {
+        PresentInfo storage p = presents[presentId];
+        uint256 remainingShares = p.claimLimit - p.claimedCount;
+
+        for (uint i = 0; i < p.contentRemaining.length; i++) {
+            uint256 remainingAmount = p.contentRemaining[i].amounts;
+            uint256 amountToTransfer;
+
+            if (remainingShares == 1) {
+                // 最后一人拿走所有剩余
+                amountToTransfer = remainingAmount;
+            } else if (remainingAmount > 0) {
+                uint256 avg = remainingAmount / remainingShares;
+                if (avg > 0) {
+                    uint256 rand = _getPseudoRandomNumber(presentId, i);
+                    // 在 (0, 2 * avg) 范围内生成一个随机数
+                    uint256 maxRand = avg * 2;
+                    if (maxRand > 1) {
+                        amountToTransfer = (rand % (maxRand - 1)) + 1;
+                    } else {
+                        amountToTransfer = 1;
+                    }
+                } else {
+                    // 剩余金额不足以每人分1wei，但只要有剩余就至少给1wei
+                    amountToTransfer = 1;
+                }
+            } else {
+                amountToTransfer = 0;
+            }
+
+            // 安全校验，确保不会转出超过剩余的金额
+            if (amountToTransfer > remainingAmount) {
+                amountToTransfer = remainingAmount;
+            }
+            
+            // 更新状态：从剩余资产中扣除
+            p.contentRemaining[i].amounts -= amountToTransfer;
+
+            // 转移资产
+            if (amountToTransfer > 0) {
+                if (p.contentRemaining[i].tokens == address(0)) {
+                    (bool success, ) = payable(recipient).call{value: amountToTransfer}("");
+                    require(success, "ETH transfer failed");
+                } else {
+                    IERC20(p.contentRemaining[i].tokens).safeTransfer(recipient, amountToTransfer);
                 }
             }
         }
