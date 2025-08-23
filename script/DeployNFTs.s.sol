@@ -13,20 +13,23 @@ interface INFTAdmin {
 contract DeployNFTs is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
-        address presentAddr = vm.envAddress("PRESENT_ADDRESS");
         address deployer = vm.addr(pk);
 
-        vm.startBroadcast(pk);
-        WrappedPresentNFT wrapped = new WrappedPresentNFT("FarGift Wrapped", "FGW", deployer);
-        UnwrappedPresentNFT unwrapped = new UnwrappedPresentNFT("FarGift Unwrapped", "FGU", deployer);
+        vm.startBroadcast(deployer);
 
-        INFTAdmin(address(wrapped)).setPresentContract(presentAddr);
-        INFTAdmin(address(unwrapped)).setPresentContract(presentAddr);
+        address presentAddress = vm.envAddress("PRESENT_ADDRESS");
+        require(presentAddress != address(0), "PRESENT_ADDRESS env not set");
 
-        Present(payable(presentAddr)).setNFTContracts(address(wrapped), address(unwrapped));
+        WrappedPresentNFT wrapped = new WrappedPresentNFT(presentAddress);
+        UnwrappedPresentNFT unwrapped = new UnwrappedPresentNFT(presentAddress);
 
-        console.log("Wrapped NFT:", address(wrapped));
-        console.log("Unwrapped NFT:", address(unwrapped));
+        INFTAdmin(address(wrapped)).setPresentContract(presentAddress);
+        INFTAdmin(address(unwrapped)).setPresentContract(presentAddress);
+
+        Present(payable(presentAddress)).setNFTContracts(address(wrapped), address(unwrapped));
+
+        console.log("Wrapped NFT Deployed at:", address(wrapped));
+        console.log("Unwrapped NFT Deployed at:", address(unwrapped));
         vm.stopBroadcast();
     }
 } 
