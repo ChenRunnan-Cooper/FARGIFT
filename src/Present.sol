@@ -521,6 +521,11 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         return _getStatus(presentId);
     }
 
+    // --- 新增：便捷的领取状态查询函数 ---
+    function getClaims(bytes32 presentId, address user) external view returns (bool) {
+        return claims[presentId][user];
+    }
+
     // ------------------------------------------------------------------------
     // 礼物 ID 生成：
     // 基于（发送者/收件人数组/资产数组/时间戳/随机熵/本合约地址）生成 keccak256 哈希；
