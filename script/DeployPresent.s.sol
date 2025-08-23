@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {Script, console} from "forge-std/Script.sol";
-import {Present} from "../src/Present.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {Present, DistributionType, Asset} from "../src/Present.sol";
 
 /**
  * @title DeployPresent
@@ -70,25 +71,32 @@ contract DeployPresentWithNFTs is Script {
 contract TestPresentCalls is Script {
     function setUp() public {}
 
-    function run() public {
+    function run(address presentAddr) external {
         // 从环境变量或配置中获取发送者私钥和合约地址
-        uint256 senderPrivateKey = vm.envUint("PRIVATE_KEY");
-        address payable presentAddress = payable(vm.envAddress("PRESENT_ADDRESS"));
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        address payable presentAddress = payable(presentAddr);
         
         Present present = Present(presentAddress);
         
         // 开始广播交易
-        vm.startBroadcast(senderPrivateKey);
+        vm.startBroadcast(pk);
         
-        // 创建测试礼物
+        // 创建测试礼物 (FIRST_COME_FIRST_SERVED 模式)
         address[] memory recipients = new address[](1);
-        recipients[0] = address(0x1234567890123456789012345678901234567890); // 测试接收者
+        recipients[0] = vm.addr(pk); // 发送给自己
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(0), 0.01 ether); // 发送0.01 ETH
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(0), 0.01 ether); // 发送0.01 ETH
         
         // 包装礼物
-        present.wrapPresent{value: 0.01 ether}(recipients, assets);
+        present.wrapPresent{value: 0.01 ether}(
+            recipients,
+            "My Deployed Gift",
+            "This is a gift from a deployed contract.",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         console.log("Gift created successfully");
         
         // 结束广播

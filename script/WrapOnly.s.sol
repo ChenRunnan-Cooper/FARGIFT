@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {Script, console} from "forge-std/Script.sol";
-import {Present} from "../src/Present.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {Present, DistributionType, Asset} from "../src/Present.sol";
 
 contract WrapOnly is Script {
     function run() external {
@@ -29,11 +30,18 @@ contract WrapOnly is Script {
             recipients[0] = sender;
         }
 
-        Present.Asset[] memory content = new Present.Asset[](1);
-        content[0] = Present.Asset(address(0), amount);
+        Asset[] memory content = new Asset[](1);
+        content[0] = Asset(address(0), amount);
 
         vm.startBroadcast(pk);
-        present.wrapPresent{value: amount}(recipients, content);
+        present.wrapPresent{value: amount}(
+            recipients,
+            "ETH-only Gift",
+            "This is a sample gift containing only ETH.",
+            content,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0 // claimLimit is ignored for this mode
+        );
         console.log("[WRAP_ONLY] wrapped ETH:", amount, "public:", isPublic);
         vm.stopBroadcast();
     }

@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {Script, console} from "forge-std/Script.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {Present} from "../src/Present.sol";
+import {Present, DistributionType, Asset} from "../src/Present.sol";
 
 contract GenerateSamplesOnExisting is Script {
     // WrapPresent(bytes32,address)
@@ -22,11 +23,18 @@ contract GenerateSamplesOnExisting is Script {
         {
             address[] memory recipients = new address[](1);
             recipients[0] = sender;
-            Present.Asset[] memory assets = new Present.Asset[](1);
-            assets[0] = Present.Asset(address(0), 0.0005 ether);
+            Asset[] memory assets = new Asset[](1);
+            assets[0] = Asset(address(0), 0.0005 ether);
 
             vm.recordLogs();
-            present.wrapPresent{value: 0.0005 ether}(recipients, assets);
+            present.wrapPresent{value: 0.0005 ether}(
+                recipients,
+                "Sample A on Existing",
+                "Simple gift",
+                assets,
+                DistributionType.FIRST_COME_FIRST_SERVED,
+                0
+            );
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE_EXIST] A wrapped:", _toHex(presentId));
 
@@ -38,11 +46,18 @@ contract GenerateSamplesOnExisting is Script {
         {
             address[] memory recipients = new address[](1);
             recipients[0] = sender;
-            Present.Asset[] memory assets = new Present.Asset[](1);
-            assets[0] = Present.Asset(address(0), 0.0004 ether);
+            Asset[] memory assets = new Asset[](1);
+            assets[0] = Asset(address(0), 0.0004 ether);
 
             vm.recordLogs();
-            present.wrapPresent{value: 0.0004 ether}(recipients, assets);
+            present.wrapPresent{value: 0.0004 ether}(
+                recipients,
+                "Sample B on Existing",
+                "To be taken back",
+                assets,
+                DistributionType.FIRST_COME_FIRST_SERVED,
+                0
+            );
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE_EXIST] B wrapped:", _toHex(presentId));
 
@@ -53,11 +68,18 @@ contract GenerateSamplesOnExisting is Script {
         // C: public wrap -> unwrap
         {
             address[] memory recipients = new address[](0);
-            Present.Asset[] memory assets = new Present.Asset[](1);
-            assets[0] = Present.Asset(address(0), 0.0003 ether);
+            Asset[] memory assets = new Asset[](1);
+            assets[0] = Asset(address(0), 0.0003 ether);
 
             vm.recordLogs();
-            present.wrapPresent{value: 0.0003 ether}(recipients, assets);
+            present.wrapPresent{value: 0.0003 ether}(
+                recipients,
+                "Sample C on Existing",
+                "Public gift",
+                assets,
+                DistributionType.FIRST_COME_FIRST_SERVED,
+                0
+            );
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE_EXIST] C wrapped (public):", _toHex(presentId));
 
@@ -69,15 +91,38 @@ contract GenerateSamplesOnExisting is Script {
         {
             address[] memory recipients = new address[](1);
             recipients[0] = sender;
-            Present.Asset[] memory assets = new Present.Asset[](1);
-            assets[0] = Present.Asset(address(0), 0.0002 ether);
+            Asset[] memory assets = new Asset[](1);
+            assets[0] = Asset(address(0), 0.0002 ether);
 
             vm.recordLogs();
-            present.wrapPresent{value: 0.0002 ether}(recipients, assets);
+            present.wrapPresent{value: 0.0002 ether}(
+                recipients,
+                "Sample D on Existing",
+                "Left active",
+                assets,
+                DistributionType.FIRST_COME_FIRST_SERVED,
+                0
+            );
             bytes32 presentId = _getPresentIdFromLogs(vm.getRecordedLogs());
             console.log("[SAMPLE_EXIST] D wrapped (left active):", _toHex(presentId));
         }
 
+        // E: 限量随机模式 (LIMITED_QUANTITY_RANDOM_SPLIT)
+        console.log("-> Wrapping a LIMITED_QUANTITY_RANDOM_SPLIT present...");
+        Asset[] memory content_E = new Asset[](1);
+        content_E[0] = Asset({tokens: address(0), amounts: 0.0004 ether});
+        uint256 claimLimit_E = 5; // 5 人随机分
+
+        present.wrapPresent{value:0.0004 ether}(
+            new address[](0),
+            "Sample: Random Split (5 winners)",
+            "A public gift where 5 winners will split the total amount.",
+            content_E,
+            DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT,
+            claimLimit_E
+        );
+        console.log("   Done wrapping random split.");
+        
         vm.stopBroadcast();
     }
 

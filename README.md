@@ -7,26 +7,26 @@
 ## 网络与合约地址（测试网，拿来即用）
 - 链：Arbitrum Sepolia（chainId 421614）
 - Present 合约地址（统一使用此地址聚合样例与订阅）：
-  - 0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db
+  - 0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0
 - 一键导出到环境变量（可直接粘贴到终端）：
   ```bash
   export ARBITRUM_SEPOLIA_RPC_URL="https://<你的RPC>"
   export PRIVATE_KEY="0x<你的测试网私钥>"
-  export PRESENT_ADDRESS="0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db"
+  export PRESENT_ADDRESS="0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0"
   ```
 
 ---
 
 ## 核心概念：多样的礼物分配模式
 
-除了基础的1对1或1对多（公开）送礼，`Present.sol` 合约现在支持更复杂的分配模式：
+合约通过一个统一的、功能强大的 `wrapPresent` 函数来创建所有类型的礼物。您可以通过调整其参数来激活不同的分配模式：
 
-| 模式 | `DistributionType` | `wrap` 函数 | 说明 |
-| :--- | :--- | :--- | :--- |
-| **先到先得** | `FIRST_COME_FIRST_SERVED` | `wrapPresent` | **经典模式**：整个礼物由一个符合条件的接收人一次性领取。若接收人列表为空，则任何人可领。 |
-| **限量均分** | `LIMITED_QUANTITY_EQUAL_SPLIT` | `wrapPresentWithOptions` | **公开红包**：礼物总额被均分为 N 份，任何人可领，先到先得，领完即止。创建时需指定 `claimLimit` (N)。 |
-| **白名单均分**| `WHITELIST_EQUAL_SPLIT` | `wrapPresentWithOptions` | **定向空投**：礼物总额按白名单人数均分，只有名单内成员可以领取自己的份额。 |
-| **限量随机** | `LIMITED_QUANTITY_RANDOM_SPLIT`| `wrapPresentRandom` | **随机红包**：创建时定义一个“奖池”（如 1个50%大奖, 10个5%阳光普照奖），领取者会随机获得其中一份。 |
+| 模式 | `DistributionType` 参数 | 关键参数说明 |
+| :--- | :--- | :--- |
+| **先到先得** | `FIRST_COME_FIRST_SERVED` | **经典模式**：整个礼物由一个符合条件的接收人一次性领取。若 `recipients` 列表为空，则任何人可领。`claimLimit` 会被忽略。 |
+| **限量均分** | `LIMITED_QUANTITY_EQUAL_SPLIT` | **公开红包**：礼物总额被均分为 N 份。创建时需在 `claimLimit` 中指定 N，并保持 `recipients` 列表为空。 |
+| **白名单均分**| `WHITELIST_EQUAL_SPLIT` | **定向空投**：礼物总额按 `recipients` 白名单的人数均分。合约会自动忽略 `claimLimit`，并使用名单长度作为上限。 |
+| **限量随机** | `LIMITED_QUANTITY_RANDOM_SPLIT`| **随机红包**：创建时需在 `prizeTiers` 中定义一个“奖池”，合约会据此计算总名额。`recipients` 需为空。 |
 
 ---
 
@@ -84,9 +84,9 @@ foundryup
   # ARBITRUM_SEPOLIA_RPC_URL=...
   # PRIVATE_KEY=0x<测试网私钥>
   ```
-- 编译
+- 编译与测试
 ```bash
-  forge clean && forge build
+  forge clean && forge build && forge test
   ```
 
 ---
@@ -111,7 +111,7 @@ foundryup
 ```bash
 export ARBITRUM_SEPOLIA_RPC_URL="https://<你的RPC>"
 export PRIVATE_KEY="0x<你的测试网私钥>"
-export PRESENT_ADDRESS="0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db"
+export PRESENT_ADDRESS="0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0"
 ```
 2) 批量产出 **多种模式** 的 ETH 样例
 ```bash
@@ -137,7 +137,6 @@ forge script script/WrapWithERC20.s.sol:WrapWithERC20 \
     - `WrapPresent(bytes32,address)`
     - `UnwrapPresent(bytes32,address)`
     - `TakeBack(bytes32,address)`
-    - （部分测试脚本用的是 `wrapPresentTest`，对应 `WrapPresentTest` 事件）
 
 ### 方式 B：新部署 + 一次性生成所有样例
 
@@ -154,7 +153,7 @@ forge script script/GenerateSamples.s.sol:GenerateSamples \
 ## miniapp / farcaster 快速接入（只需合约地址 + ABI + 链信息）
 
 - 链：Arbitrum Sepolia（chainId 421614）
-- 合约地址：统一使用 `0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db`
+- 合约地址：统一使用 `0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0`
 - ABI：`abi/raw/Present.abi.json`
 
 **监听事件**（以 viem 为例）
@@ -164,13 +163,12 @@ import { arbitrumSepolia } from 'viem/chains';
 import presentAbi from './abi/raw/Present.abi.json';
 
 const client = createPublicClient({ chain: arbitrumSepolia, transport: http(process.env.RPC_URL) });
-const PRESENT = '0x3B3cF7ee8dbCDDd8B8451e38269D982F351ca3db';
+const PRESENT = '0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0';
 
-// 事件名没有变化，依然可以复用
+// 合约现在只有一套统一的事件
 client.watchContractEvent({ address: PRESENT, abi: presentAbi, eventName: 'WrapPresent', onLogs: logs => {/* logs[i].args.presentId */} });
 client.watchContractEvent({ address: PRESENT, abi: presentAbi, eventName: 'UnwrapPresent', onLogs: logs => {} });
 client.watchContractEvent({ address: PRESENT, abi: presentAbi, eventName: 'TakeBack', onLogs: logs => {} });
-// 如使用 wrapPresentTest 入口，还可监听 WrapPresentTest
 ```
 **读取礼物详情**
 ```ts
@@ -201,20 +199,22 @@ const prizeTiers = await present.read.getPresentPrizeTiers([presentId]); // 获�
 ---
 
 ## 常见问题
-- **如何选择使用哪个 `wrap` 函数？**
-  - `wrapPresent`：用于经典的“先到先得”模式。
-  - `wrapPresentWithOptions`：用于“限量均分”和“白名单均分”模式。
-  - `wrapPresentRandom`：用于“随机红包”模式。
+- **如何创建不同类型的礼物？**
+  - 所有类型的礼物都通过唯一的 `wrapPresent` 函数创建。您需要根据想创建的模式，正确地设置 `_distType`、`_recipients`、`_claimLimit` 和 `_prizeTiers` 这几个关键参数。
 - **为什么要先 `approve` 再 wrap ERC20？**
-  - 因为合约会调用 `transferFrom` 把代币从你地址托管到合约，需要你先授权额度
-- **`WrapPresent` vs `WrapPresentTest`？**
-  - 核心逻辑一致。`...Test` 结尾的函数会触发对应的 `...Test` 事件，便于在测试环境下区分数据。部分旧脚本可能仍在使用 `Test` 版本。
+  - 因为合约会调用 `transferFrom` 把代币从你地址托管到合约，需要你先授权额度。
 - **要不要把“日志文件”发给前端？**
-  - 不需要。miniapp/farcaster 直接从链上按 `PRESENT_ADDRESS` 订阅/拉取；`broadcast/` 仅供本地对照
+  - 不需要。miniapp/farcaster 直接从链上按 `PRESENT_ADDRESS` 订阅/拉取；`broadcast/` 仅供本地对照。
 
 ---
 
 ## 变更历史
+
+### 接口统一化重构
+- **接口变更**：
+  - 所有 `wrap` 功能统一到唯一的 `wrapPresent` 函数中，该函数包含所有参数（元数据、分配模式等）。
+  - 移除了所有 `...Test` 相关的冗余函数和事件，使接口和事件更加清晰。
+- **脚本与测试更新**：所有脚本和测试文件都已更新，以适配新的统一接口。
 
 ### 功能升级：多种分配模式
 - **新功能**：合约新增“限量均分”、“白名单均分”、“随机红包”三种分配模式。

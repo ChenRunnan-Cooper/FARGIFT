@@ -1,13 +1,12 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {Script, console} from "forge-std/Script.sol";
-import {Present} from "../src/Present.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {Present, DistributionType, Asset} from "../src/Present.sol";
 
-contract Simulate is Script {
-    function setUp() public {}
-
-    function run() public {
+contract SimulatePresent is Script {
+    function run(address presentAddr) external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address sender = vm.addr(pk);
 
@@ -24,10 +23,17 @@ contract Simulate is Script {
         address[] memory recipients = new address[](1);
         recipients[0] = address(0x1234567890123456789012345678901234567890);
 
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(0), 0.01 ether);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(0), 0.01 ether);
 
-        present.wrapPresent{value: 0.01 ether}(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "For Simulation",
+            "This is a test present for simulation.",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0 // claimLimit is ignored for FCFS mode
+        );
         console.log("[SIM] wrapPresent called successfully");
 
         vm.stopBroadcast();

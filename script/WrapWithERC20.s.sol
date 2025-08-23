@@ -1,9 +1,11 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 import {Script} from "forge-std/Script.sol";
-import {Present} from "../src/Present.sol";
+import {console} from "forge-std/console.sol";
+import {Present, DistributionType, Asset} from "../src/Present.sol";
 import {MockERC20} from "../test/mocks/MockERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract WrapWithERC20 is Script {
     function run() external {
@@ -39,11 +41,19 @@ contract WrapWithERC20 is Script {
         address[] memory recipients = new address[](1);
         recipients[0] = sender; // 定向给自己，便于后续 unwrap
 
-        Present.Asset[] memory content = new Present.Asset[](1);
-        content[0] = Present.Asset(tokenAddr, 1234 ether); // 测试金额
+        Asset[] memory content = new Asset[](1);
+        content[0] = Asset(tokenAddr, 1234 ether); // 测试金额
 
-        present.wrapPresentTest(recipients, "ERC20 Gift", "Test token wrapped via script", content);
-
+        present.wrapPresent(
+            recipients,
+            "ERC20 Gift",
+            "A sample gift containing MockERC20 tokens.",
+            content,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0 // claimLimit is ignored
+        );
         vm.stopBroadcast();
+
+        console.log("ERC20 gift wrapped successfully.");
     }
 } 

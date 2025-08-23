@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {Script, console} from "forge-std/Script.sol";
-import {Present} from "../src/Present.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {Present, DistributionType, Asset} from "../src/Present.sol";
 
 contract WrapPublicOnce is Script {
     function run() external {
@@ -13,11 +14,18 @@ contract WrapPublicOnce is Script {
         Present present = Present(payable(presentAddr));
 
         address[] memory recipients = new address[](0); // 公开领取
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(0), 0.01 ether);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(0), 0.01 ether);
 
-        present.wrapPresentTest{value: 0.01 ether}(recipients, "Public Demo", "Anyone can unwrap", assets);
-        console.log("wrapPresentTest(public) executed");
+        present.wrapPresent{value: 0.0001 ether}(
+            new address[](0),
+            "Public Gift",
+            "This is a public gift for anyone to claim.",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0 // claimLimit is ignored
+        );
+        console.log("wrapPresent(public) executed");
 
         vm.stopBroadcast();
     }

@@ -2,9 +2,10 @@
 pragma solidity ^0.8.20;
 
 import {Test, console, Vm} from "forge-std/Test.sol";
-import {Present} from "../src/Present.sol";
-import {MockERC20} from "./mocks/MockERC20.sol";
+import {Present, DistributionType, Asset} from "../src/Present.sol";
+import {IPresentNFT} from "../src/Present.sol";
 import {MockPresentNFT} from "./mocks/MockPresentNFT.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract PresentTest is Test {
     // 测试合约和模拟代币
@@ -77,12 +78,19 @@ contract PresentTest is Test {
         recipients[0] = recipient1;
         recipients[1] = recipient2;
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(0), ETH_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(0), ETH_AMOUNT);
         
         vm.recordLogs();
         vm.prank(sender);
-        present.wrapPresent{value: ETH_AMOUNT}(recipients, assets);
+        present.wrapPresent{value: ETH_AMOUNT}(
+            recipients,
+            "ETH Gift",
+            "A test gift with ETH",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         
         // 从事件中获取礼物ID (不使用变量避免警告)
         getPresentIdFromEvents();
@@ -103,16 +111,23 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](2);
-        assets[0] = Present.Asset(address(token1), TOKEN1_AMOUNT);
-        assets[1] = Present.Asset(address(token2), TOKEN2_AMOUNT);
+        Asset[] memory assets = new Asset[](2);
+        assets[0] = Asset(address(token1), TOKEN1_AMOUNT);
+        assets[1] = Asset(address(token2), TOKEN2_AMOUNT);
         
         uint256 senderToken1Before = token1.balanceOf(sender);
         uint256 senderToken2Before = token2.balanceOf(sender);
         
         vm.recordLogs();
         vm.prank(sender);
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Token Gift",
+            "A test gift with tokens",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         
         // 从事件中获取礼物ID (不使用变量避免警告)
         getPresentIdFromEvents();
@@ -129,20 +144,27 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](3);
-        assets[0] = Present.Asset(address(0), ETH_AMOUNT);
-        assets[1] = Present.Asset(address(token1), TOKEN1_AMOUNT);
-        assets[2] = Present.Asset(address(token2), TOKEN2_AMOUNT);
+        Asset[] memory assets = new Asset[](3);
+        assets[0] = Asset(address(0), ETH_AMOUNT);
+        assets[1] = Asset(address(token1), TOKEN1_AMOUNT);
+        assets[2] = Asset(address(token2), TOKEN2_AMOUNT);
         
         vm.recordLogs();
         vm.prank(sender);
-        present.wrapPresent{value: ETH_AMOUNT}(recipients, assets);
+        present.wrapPresent{value: ETH_AMOUNT}(
+            recipients,
+            "Mixed Gift",
+            "A test gift with ETH and tokens",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         
         // 从事件中获取礼物ID
         bytes32 presentId = getPresentIdFromEvents();
         
         // 验证存储的礼物内容
-        Present.Asset[] memory storedAssets = present.getPresentContent(presentId);
+        Asset[] memory storedAssets = present.getPresentContent(presentId);
         
         assertEq(storedAssets.length, 3, "Should store 3 assets");
         assertEq(storedAssets[0].tokens, address(0), "First asset should be ETH");
@@ -305,13 +327,20 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(token1), TOKEN1_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(token1), TOKEN1_AMOUNT);
         
         // 应该失败
         vm.prank(sender);
         vm.expectRevert("Contains blacklisted token");
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Blacklisted Gift",
+            "This should fail",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
     }
     
     // 测试无法将ETH加入黑名单
@@ -340,12 +369,19 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(token1), TOKEN1_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(token1), TOKEN1_AMOUNT);
         
         vm.prank(sender);
         vm.expectRevert();  // 使用通用expectRevert而不指定具体消息
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Paused Gift",
+            "This should fail",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         
         // 恢复合约
         vm.prank(owner);
@@ -353,7 +389,14 @@ contract PresentTest is Test {
         
         // 现在应该可以创建礼物
         vm.prank(sender);
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Unpaused Gift",
+            "This should succeed",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
     }
     
     // 测试非所有者不能暂停合约
@@ -447,16 +490,23 @@ contract PresentTest is Test {
         
         // 创建超过限制的资产
         uint256 maxAssetCount = present.maxAssetCount();
-        Present.Asset[] memory assets = new Present.Asset[](maxAssetCount + 1);
+        Asset[] memory assets = new Asset[](maxAssetCount + 1);
         
         for (uint256 i = 0; i < assets.length; i++) {
-            assets[i] = Present.Asset(address(token1), 1);
+            assets[i] = Asset(address(token1), 1);
         }
         
         // 应该失败
         vm.prank(sender);
         vm.expectRevert("Invalid content size");
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Too Many Assets",
+            "This should fail",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
     }
     
     // 测试边界条件：太多接收者
@@ -469,12 +519,19 @@ contract PresentTest is Test {
             recipients[i] = address(uint160(i + 100));
         }
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(token1), TOKEN1_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(token1), TOKEN1_AMOUNT);
         
         vm.prank(sender);
         vm.expectRevert("Too many recipients");
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Too Many Recipients",
+            "This should fail",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
     }
     
     // 测试零金额礼物
@@ -482,12 +539,19 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(token1), 0);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(token1), 0);
         
         vm.prank(sender);
         vm.expectRevert("Amount must be positive");
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Zero Amount",
+            "This should fail",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
     }
     
     // 测试任何人可领取礼物
@@ -495,12 +559,19 @@ contract PresentTest is Test {
         // 创建任何人可领取的礼物
         address[] memory recipients = new address[](0); // 空数组表示任何人可领取
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(token1), TOKEN1_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(token1), TOKEN1_AMOUNT);
         
         vm.recordLogs();
         vm.prank(sender);
-        present.wrapPresent(recipients, assets);
+        present.wrapPresent(
+            recipients,
+            "Public Gift",
+            "Anyone can claim",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         
         bytes32 presentId = getPresentIdFromEvents();
         
@@ -516,12 +587,19 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(0), ETH_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(0), ETH_AMOUNT);
         
         vm.prank(sender);
         vm.expectRevert("Insufficient ETH sent");
-        present.wrapPresent{value: ETH_AMOUNT - 1}(recipients, assets);
+        present.wrapPresent{value: ETH_AMOUNT - 1}(
+            recipients,
+            "Insufficient ETH",
+            "This should fail",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
     }
     
     // 测试多余ETH退还功能
@@ -529,13 +607,20 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(0), ETH_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(0), ETH_AMOUNT);
         
         uint256 senderEthBefore = sender.balance;
         
         vm.prank(sender);
-        present.wrapPresent{value: ETH_AMOUNT + 1 ether}(recipients, assets);
+        present.wrapPresent{value: ETH_AMOUNT + 1 ether}(
+            recipients,
+            "ETH Refund",
+            "Testing refund",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         
         assertEq(sender.balance, senderEthBefore - ETH_AMOUNT, "Excess ETH should be refunded");
         assertEq(address(present).balance, ETH_AMOUNT, "Contract should keep exact ETH amount");
@@ -596,7 +681,7 @@ contract PresentTest is Test {
     }
     
     // 测试ERC721接收功能
-    function test_OnERC721Received() public {
+    function test_OnERC721Received() public view {
         bytes4 expectedSelector = bytes4(keccak256("onERC721Received(address,address,uint256,bytes)"));
         bytes4 returnedSelector = present.onERC721Received(address(0), address(0), 0, "");
         assertEq(returnedSelector, expectedSelector, "Should return correct selector");
@@ -638,8 +723,8 @@ contract PresentTest is Test {
         address[] memory recipients = new address[](1);
         recipients[0] = recipient1;
         
-        Present.Asset[] memory assets = new Present.Asset[](1);
-        assets[0] = Present.Asset(address(token1), TOKEN1_AMOUNT);
+        Asset[] memory assets = new Asset[](1);
+        assets[0] = Asset(address(token1), TOKEN1_AMOUNT);
         
         // 授权新合约
         vm.prank(sender);
@@ -647,7 +732,14 @@ contract PresentTest is Test {
         
         // 应该可以正常打包礼物，即使没有设置NFT合约
         vm.prank(sender);
-        newPresent.wrapPresent(recipients, assets);
+        newPresent.wrapPresent(
+            recipients,
+            "No NFT Gift",
+            "This should work without NFTs",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
     }
     
     // 内部辅助函数：创建混合礼物
@@ -656,14 +748,21 @@ contract PresentTest is Test {
         recipients[0] = recipient1;
         recipients[1] = recipient2;
         
-        Present.Asset[] memory assets = new Present.Asset[](3);
-        assets[0] = Present.Asset(address(0), ETH_AMOUNT);
-        assets[1] = Present.Asset(address(token1), TOKEN1_AMOUNT);
-        assets[2] = Present.Asset(address(token2), TOKEN2_AMOUNT);
+        Asset[] memory assets = new Asset[](3);
+        assets[0] = Asset(address(0), ETH_AMOUNT);
+        assets[1] = Asset(address(token1), TOKEN1_AMOUNT);
+        assets[2] = Asset(address(token2), TOKEN2_AMOUNT);
         
         vm.recordLogs();
         vm.prank(sender);
-        present.wrapPresent{value: ETH_AMOUNT}(recipients, assets);
+        present.wrapPresent{value: ETH_AMOUNT}(
+            recipients,
+            "Mixed Helper Gift",
+            "Created from a helper function",
+            assets,
+            DistributionType.FIRST_COME_FIRST_SERVED,
+            0
+        );
         
         return getPresentIdFromEvents();
     }

@@ -39,13 +39,21 @@ interface IPresentViewU {
         view
         returns (
             address sender,
-            address[] memory recipients,
-            Asset[] memory content,
             string memory title,
             string memory description,
             uint8 status,
-            uint256 expiryAt
+            uint256 expiryAt,
+            DistributionType distType,
+            uint256 claimLimit,
+            uint256 claimedCount
         );
+    function getPresentContent(bytes32 presentId) external view returns (Asset[] memory);
+    enum DistributionType {
+        FIRST_COME_FIRST_SERVED,
+        LIMITED_QUANTITY_EQUAL_SPLIT,
+        WHITELIST_EQUAL_SPLIT,
+        LIMITED_QUANTITY_RANDOM_SPLIT
+    }
 }
 
 contract UnwrappedPresentNFT is ERC721, Ownable {
@@ -85,9 +93,11 @@ contract UnwrappedPresentNFT is ERC721, Ownable {
     // 生成元数据：返回 data:application/json;base64,...
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         require(_ownerOf(tokenId) != address(0), "Nonexistent token"); // 确认存在
+        bytes32 presentId = bytes32(tokenId);
         // 读取展示信息：content.length/title/desc
-        (,, IPresentViewU.Asset[] memory content, string memory title, string memory desc,,) =
-            IPresentViewU(presentContract).getPresent(bytes32(tokenId));
+        (, string memory title, string memory desc,,,,,) =
+            IPresentViewU(presentContract).getPresent(presentId);
+        IPresentViewU.Asset[] memory content = IPresentViewU(presentContract).getPresentContent(presentId);
 
         string memory stateLabel = "UNWRAPPED"; // 已拆包标签
         string memory name_ = string(abi.encodePacked("FarGift Unwrapped #", tokenId.toString()));

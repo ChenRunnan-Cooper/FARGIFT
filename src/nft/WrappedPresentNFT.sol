@@ -38,14 +38,22 @@ interface IPresentView {
         external
         view
         returns (
-            address sender,               // 送礼人
-            address[] memory recipients,  // 接收者数组
-            Asset[] memory content,       // 资产列表（仅读取长度用于属性）
-            string memory title,          // 标题（用于 SVG 文本）
-            string memory description,    // 描述（用于 JSON description）
-            uint8 status,                 // 当前状态（展示可选）
-            uint256 expiryAt              // 过期时间（展示可选）
+            address sender,
+            string memory title,
+            string memory description,
+            uint8 status,
+            uint256 expiryAt,
+            DistributionType distType,
+            uint256 claimLimit,
+            uint256 claimedCount
         );
+    function getPresentContent(bytes32 presentId) external view returns (Asset[] memory);
+    enum DistributionType {
+        FIRST_COME_FIRST_SERVED,
+        LIMITED_QUANTITY_EQUAL_SPLIT,
+        WHITELIST_EQUAL_SPLIT,
+        LIMITED_QUANTITY_RANDOM_SPLIT
+    }
 }
 
 contract WrappedPresentNFT is ERC721, Ownable {
@@ -86,9 +94,11 @@ contract WrappedPresentNFT is ERC721, Ownable {
     // 生成元数据：返回 data:application/json;base64,...
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         require(_ownerOf(tokenId) != address(0), "Nonexistent token"); // 确保 token 存在
+        bytes32 presentId = bytes32(tokenId);
         // 读取展示所需信息（仅使用 content.length/title/desc）
-        (,, IPresentView.Asset[] memory content, string memory title, string memory desc,,) =
-            IPresentView(presentContract).getPresent(bytes32(tokenId));
+        (, string memory title, string memory desc,,,,,) =
+            IPresentView(presentContract).getPresent(presentId);
+        IPresentView.Asset[] memory content = IPresentView(presentContract).getPresentContent(presentId);
 
         // 固定状态标签（本合约表示 WRAPPED）
         string memory stateLabel = "WRAPPED";
