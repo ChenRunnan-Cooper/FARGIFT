@@ -7,12 +7,12 @@
 ## 网络与合约地址（测试网，拿来即用）
 - 链：Arbitrum Sepolia（chainId 421614）
 - Present 合约地址（统一使用此地址聚合样例与订阅）：
-  - 0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0
+  - 0x8cED4381845b1fB450C8D2279ed4c888A38fC08d
 - 一键导出到环境变量（可直接粘贴到终端）：
   ```bash
   export ARBITRUM_SEPOLIA_RPC_URL="https://<你的RPC>"
   export PRIVATE_KEY="0x<你的测试网私钥>"
-  export PRESENT_ADDRESS="0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0"
+  export PRESENT_ADDRESS="0x8cED4381845b1fB450C8D2279ed4c888A38fC08d"
   ```
 
 ---
@@ -111,7 +111,7 @@ foundryup
 ```bash
 export ARBITRUM_SEPOLIA_RPC_URL="https://<你的RPC>"
 export PRIVATE_KEY="0x<你的测试网私钥>"
-export PRESENT_ADDRESS="0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0"
+export PRESENT_ADDRESS="0x8cED4381845b1fB450C8D2279ed4c888A38fC08d"
 ```
 2) 批量产出 **多种模式** 的 ETH 样例
 ```bash
@@ -153,7 +153,7 @@ forge script script/GenerateSamples.s.sol:GenerateSamples \
 ## miniapp / farcaster 快速接入（只需合约地址 + ABI + 链信息）
 
 - 链：Arbitrum Sepolia（chainId 421614）
-- 合约地址：统一使用 `0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0`
+- 合约地址：统一使用 `0x8cED4381845b1fB450C8D2279ed4c888A38fC08d`
 - ABI：`abi/raw/Present.abi.json`
 
 **监听事件**（以 viem 为例）
@@ -163,7 +163,7 @@ import { arbitrumSepolia } from 'viem/chains';
 import presentAbi from './abi/raw/Present.abi.json';
 
 const client = createPublicClient({ chain: arbitrumSepolia, transport: http(process.env.RPC_URL) });
-const PRESENT = '0x5Ee00E5BA73d7ab2fe0B1d9aDa12212CB7ae28f0';
+const PRESENT = '0x8cED4381845b1fB450C8D2279ed4c888A38fC08d';
 
 // 合约现在只有一套统一的事件
 client.watchContractEvent({ address: PRESENT, abi: presentAbi, eventName: 'WrapPresent', onLogs: logs => {/* logs[i].args.presentId */} });

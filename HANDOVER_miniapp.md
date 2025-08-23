@@ -7,11 +7,11 @@
 ## 零配置信息（直接复制使用）
 - 链：Arbitrum Sepolia（chainId 421614）
 - Present 合约地址（统一使用此地址聚合样例与订阅）
-  - 0xf76232f17Ed8314B0E7A39541C17137344167444
+  - 0x8cED4381845b1fB450C8D2279ed4c888A38fC08d
 - 一键导出（终端粘贴）：
   ```bash
   export VITE_CHAIN_ID=421614
-  export VITE_PRESENT_ADDRESS="0xf76232f17Ed8314B0E7A39541C17137344167444"
+  export VITE_PRESENT_ADDRESS="0x8cED4381845b1fB450C8D2279ed4c888A38fC08d"
   # 任选一个稳定的 RPC：
   export VITE_RPC_HTTP="https://arb-sepolia.g.alchemy.com/v2/<KEY>"
   ```
@@ -21,7 +21,7 @@
 ## 一、你们需要哪些最小信息
 - 链：Arbitrum Sepolia（chainId 421614）
 - 合约地址：统一使用同一个 `Present` 地址（便于订阅聚合）
-  - 0xf76232f17Ed8314B0E7A39541C17137344167444
+  - 0x8cED4381845b1fB450C8D2279ed4c888A38fC08d
 - ABI（“纯 ABI 数组”，可直接被 SDK 使用）
   - `abi/raw/Present.abi.json`
   - 如需 NFT 的 `tokenURI` 展示：
@@ -58,7 +58,7 @@ import { arbitrumSepolia } from 'viem/chains';
 import presentAbi from '../abi/raw/Present.abi.json';
 
 const client = createPublicClient({ chain: arbitrumSepolia, transport: http(process.env.VITE_RPC_HTTP) });
-const PRESENT = '0xf76232f17Ed8314B0E7A39541C17137344167444';
+const PRESENT = '0x8cED4381845b1fB450C8D2279ed4c888A38fC08d';
 ```
 
 2) 监听实时事件（HTTP 轮询）
@@ -159,7 +159,7 @@ TX=0x<txHash>
 cast receipt $TX --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL"
 
 # 读取礼物核心信息
-cast call 0xf76232f17Ed8314B0E7A39541C17137344167444 \
+cast call 0x8cED4381845b1fB450C8D2279ed4c888A38fC08d \
   "getPresent(bytes32)((address,string,string,uint8,uint256,uint8,uint256,uint256))" \
   0x<PRESENT_ID> \
   --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL"

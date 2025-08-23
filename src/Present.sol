@@ -320,9 +320,11 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
         p.claimLimit = finalClaimLimit; // 使用经过验证和计算后的最终领取上限
         p.claimedCount = 0;
 
-        // --- 新增：初始化剩余资产追踪器 ---
-        for (uint i4 = 0; i4 < params.content.length; i4++) {
-            p.contentRemaining.push(params.content[i4]);
+        // --- 新增：仅在随机模式下初始化剩余资产追踪器 ---
+        if (params.distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            for (uint i4 = 0; i4 < params.content.length; i4++) {
+                p.contentRemaining.push(params.content[i4]);
+            }
         }
 
         // 5) 统计
@@ -353,47 +355,41 @@ contract Present is Ownable, ReentrancyGuard, Pausable, IERC721Receiver {
     {
         PresentInfo storage p = presents[presentId];
         
-        // 1. 统一校验：是否已领取
+        // 1. 检查 (Checks)
         require(!claims[presentId][msg.sender], "Already claimed");
-
         DistributionType distType = p.distType;
-        
-        // 2. 根据不同模式执行不同逻辑
-        if (distType == DistributionType.FIRST_COME_FIRST_SERVED) {
-            // --- 兼容旧逻辑 ---
+        if (distType == DistributionType.FIRST_COME_FIRST_SERVED || distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
             require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
-            _transferAssets(presentId, msg.sender); // 转移全部资产
-        } 
-        else if (distType == DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT) {
-            // --- 限量均分逻辑 ---
-            require(p.claimedCount < p.claimLimit, "All shares have been claimed");
-            _transferShare(presentId, msg.sender); // 转移计算后的份额
         }
-        else if (distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
-            // --- 白名单均分逻辑 ---
-            require(_isRecipient(presentId, msg.sender), "Only recipient can claim");
-            _transferShare(presentId, msg.sender); // 转移计算后的份额
-        }
-        else if (distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
-            // --- 限量随机逻辑 ---
-            require(p.claimedCount < p.claimLimit, "All shares have been claimed");
-            _transferRandomShare(presentId, msg.sender);
-        }
+        require(p.claimedCount < p.claimLimit, "All shares have been claimed");
 
-        // 3. 更新状态
+        // 2. 生效 (Effects) - 在外部交互前更新所有状态
         claims[presentId][msg.sender] = true;
         p.claimedCount++;
 
+        // 3. 交互 (Interactions) - 执行资产转移和 NFT 铸造
+        if (distType == DistributionType.FIRST_COME_FIRST_SERVED) {
+            _transferAssets(presentId, msg.sender); // 转移全部资产
+        } 
+        else if (distType == DistributionType.LIMITED_QUANTITY_EQUAL_SPLIT) {
+            _transferShare(presentId, msg.sender); // 转移计算后的份额
+        }
+        else if (distType == DistributionType.WHITELIST_EQUAL_SPLIT) {
+            _transferShare(presentId, msg.sender); // 转移计算后的份额
+        }
+        else if (distType == DistributionType.LIMITED_QUANTITY_RANDOM_SPLIT) {
+            _transferRandomShare(presentId, msg.sender);
+        }
+
+        // 在所有交互后更新最终状态和事件
         if (p.claimedCount >= p.claimLimit) {
-            // 如果已领完，更新最终状态
             p.status = PRESENT_UNWRAPPED; // 标记为已领完
         }
         
-        // 4. 统计、事件和 NFT
         totalPresentsUnwrapped++;
         userUnwrappedCount[msg.sender]++;
         if (unwrappedNFT != address(0)) { IPresentNFT(unwrappedNFT).mint(msg.sender, presentId); }
-        emit UnwrapPresent(presentId, msg.sender); // 复用旧事件
+        emit UnwrapPresent(presentId, msg.sender);
     }
 
     // --- 旧的 unwrapPresent/unwrapPresentTest 函数已移除或重构为 claimPresent/claimPresentTest ---
